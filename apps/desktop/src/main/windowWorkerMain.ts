@@ -36,6 +36,8 @@ function startWorker() {
       process.send?.({ protocolVersion: 1, type: 'ready', generation, nonce: message.nonce });
       return;
     }
+    // Controller responses are reserved for the worker-side RPC relay.
+    if (message.type === 'response') return;
     if (generation === undefined || message.generation !== generation) return;
     try {
       if (message.command === 'open') { await open(); respond(message.id, true, { visible: !!window?.isVisible() }); }

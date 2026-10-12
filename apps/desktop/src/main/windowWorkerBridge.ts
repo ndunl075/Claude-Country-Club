@@ -25,16 +25,18 @@ export class WindowWorkerBridge {
   private startup: Promise<void> | undefined;
   private settleStartup: Pending | undefined;
 
-  constructor(private readonly port: WindowWorkerPort, options: { generation: number; nonce?: string; id?: () => string }) {
+  constructor(private readonly port: WindowWorkerPort, options: { generation: number; nonce?: string; id?: () => string; onRequest?: (command: string, payload: unknown) => Promise<unknown> | unknown }) {
     this.generation = options.generation;
     this.nonce = options.nonce ?? randomBytes(24).toString('hex');
     this.id = options.id ?? randomUUID;
+    this.onRequest = options.onRequest;
     port.on('message', value => this.receive(value));
     port.on('disconnect', () => this.stop('The course window worker disconnected.'));
     port.on('exit', () => this.stop('The course window worker exited.'));
     port.on('error', () => this.stop('The course window worker failed.'));
   }
   private readonly id: () => string;
+  private readonly onRequest: ((command: string, payload: unknown) => Promise<unknown> | unknown) | undefined;
 
   async start(): Promise<void> {
     if (this.stopped) throw new WindowWorkerUnavailableError();
@@ -70,14 +72,22 @@ export class WindowWorkerBridge {
     if (this.stopped || !isCurrentWorkerMessage(value, this.generation, this.nonce)) return;
     const message: WindowWorkerToController = value;
     if (message.type === 'ready') { this.ready = true; this.settleStartup?.resolve(undefined); this.settleStartup = undefined; this.startup = undefined; return; }
-    // Worker-to-controller requests are reserved for the next relay layer.
-    // This transport does not treat an unsolicited request as a response.
-    if (message.type === 'request') return;
+    if (message.type === 'request') { void this.handleRequest(message); return; }
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
     if (message.ok) pending.resolve(message.payload);
     else pending.reject(new WindowWorkerUnavailableError(message.errorCode ?? 'The course window worker rejected the request.'));
+  }
+
+  private async handleRequest(message: Extract<WindowWorkerToController, { type: 'request' }>) {
+    if (!this.ready || !this.onRequest) { await this.transmit({ protocolVersion: 1, type: 'response', generation: this.generation, id: message.id, ok: false, errorCode: 'WORKER_NOT_READY' }).catch(() => undefined); return; }
+    try {
+      const payload = await this.onRequest(message.command, message.payload);
+      await this.transmit({ protocolVersion: 1, type: 'response', generation: this.generation, id: message.id, ok: true, payload });
+    } catch {
+      await this.transmit({ protocolVersion: 1, type: 'response', generation: this.generation, id: message.id, ok: false, errorCode: 'CONTROLLER_REJECTED' }).catch(() => undefined);
+    }
   }
 
   private stop(message: string) {

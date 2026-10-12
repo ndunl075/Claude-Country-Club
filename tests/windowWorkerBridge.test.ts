@@ -36,3 +36,14 @@ test('rejects use before ready, ignores stale traffic, and fails inflight work o
   const failedSave = expect(saving).rejects.toBeInstanceOf(WindowWorkerUnavailableError);
   activePort.emit('exit'); await failedSave;
 });
+
+test('relays only post-ready worker requests through the controller handler', async () => {
+  const port = new FakePort(), bridge = new WindowWorkerBridge(port, { generation: 7, nonce, onRequest: (command, payload) => command === 'state' ? { payload } : Promise.reject(new Error('denied')) });
+  port.emit('message', { protocolVersion: 1, type: 'request', generation: 7, id: 'early', command: 'state', payload: {} });
+  await new Promise(resolve => setTimeout(resolve));
+  expect(port.sent.at(-1)).toMatchObject({ type: 'response', id: 'early', ok: false, errorCode: 'WORKER_NOT_READY' });
+  const starting = bridge.start(); port.emit('message', ready()); await starting;
+  port.emit('message', { protocolVersion: 1, type: 'request', generation: 7, id: 'state', command: 'state', payload: { local: true } });
+  await new Promise(resolve => setTimeout(resolve));
+  expect(port.sent.at(-1)).toMatchObject({ type: 'response', id: 'state', ok: true, payload: { payload: { local: true } } });
+});
