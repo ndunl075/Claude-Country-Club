@@ -21,6 +21,7 @@ import { fitWindowBounds } from './windowBounds';
 import { diagnosticReport, DiagnosticReviews } from './diagnosticExport';
 import { DiagnosticLog, DIAGNOSTIC_CHUNK_BYTES } from './diagnosticLog';
 import { runWindowWorker } from './windowWorkerMain';
+import { launchWindowWorker } from './windowWorkerLauncher';
 
 app.setName('Claude Country Club');
 const testing = process.env.CCC_TEST_MODE === '1';
@@ -223,6 +224,24 @@ async function startBroker() {
   broker.on('error',()=>diagnose('BROKER_UNAVAILABLE','Automatic connections are unavailable. Practice still works. Repair the application to restore the helper.'));
   broker.on('exit',()=>{if(socketDirectory)void fs.rmdir(socketDirectory).catch(()=>undefined);brokerReady=false;registry.disconnect(); if (!quitting) {reconcile();diagnose('BROKER_STOPPED','Local connection stopped. Restart Country Club to reconnect.');}});
 }
+async function runWindowWorkerControllerProbe() {
+  const { child, bridge } = launchWindowWorker(1);
+  try {
+    await bridge.start();
+    await bridge.request('open', {});
+    await bridge.request('hide', {});
+    await bridge.request('quit', {});
+    await new Promise<void>((resolve, reject) => {
+      const timer=setTimeout(()=>reject(new Error('Window worker did not exit.')),5_000);
+      child.once('exit',code=>{clearTimeout(timer);code===0?resolve():reject(new Error(`Window worker exited ${code}.`));});
+      child.once('error',error=>{clearTimeout(timer);reject(error);});
+    });
+    console.log('CCC_WINDOW_WORKER_CONTROLLER_PROBE_OK');
+  } catch (error) {
+    console.error('CCC_WINDOW_WORKER_CONTROLLER_PROBE_FAILED',error instanceof Error?error.message:String(error));
+    child.kill(); throw error;
+  }
+}
 function installIPC() {
   const handle=(name:string,fn:(...args:any[])=>unknown) => ipcMain.handle(`ccc:${name}`,(event,...args)=> {
     if (!window || event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || !event.senderFrame.url.startsWith('ccc://app/')) throw new Error('Untrusted IPC sender');
@@ -361,6 +380,7 @@ else app.whenReady().then(async()=> {
     tray.setContextMenu(Menu.buildFromTemplate([{label:'Open Country Club',click:()=>void requestOpen('dashboard')},{label:'Practice a round',click:()=>void requestOpen('practice')},{label:'Pause automatic play',click:()=>{store.setSettings({automatic:false});reconcile();}},{type:'separator'},{label:'Quit',click:()=>app.quit()}]));
     tray.on('click',()=>void requestOpen('dashboard'));
     try {await startBroker();} catch {diagnose('BROKER_UNAVAILABLE','Automatic connections are unavailable. Practice still works. Repair the application to restore the helper.');}
+    if (testing && process.env.CCC_WINDOW_WORKER_CONTROLLER_PROBE==='1') { await runWindowWorkerControllerProbe(); app.quit(); return; }
     const interval=setInterval(()=>{if(registry.expire())reconcile();},60_000);interval.unref();
   } catch(error) { if(!background && systemHolds.size===0)dialog.showErrorBox('Country Club could not start',error instanceof Error?error.message:'Your saved data was preserved. Please repair the application.');quitting=true;app.quit(); }
 });
