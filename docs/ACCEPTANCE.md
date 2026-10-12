@@ -1,6 +1,16 @@
 # Product acceptance evidence
 
-This is an unsigned development preview. Passing fixture checks does not certify provider compatibility or production release readiness. Evidence below was reviewed on Windows on October 11, 2026. The active implementation goal remains open.
+This is an unsigned development preview. Passing fixture checks does not certify provider compatibility or production release readiness. Evidence below was reviewed on Windows on October 11–12, 2026. The active implementation goal remains open.
+
+## Session-registry installer candidate (October 12, 2026)
+
+Source commit 1f5eaa4 prevents rejected unknown activity from retaining orphan turn history and rejected mismatched events from consuming a future valid start. Both regressions failed before the fix; typecheck, 146 unit tests and native checks pass. Separate packaged Claude lifecycle and E2E checks pass. The rebuilt unsigned preview installer has SHA256 5312badf4ff877a207e884c4ff59fa27b25492eaec8a682cfafdb232d8e09b3a. It now passes all 27 installed acceptance checks and nine interruption/safety checks, including production singleton handoff, running-game refusal, Unicode/file-lock recovery, repair and uninstall, and is copied to the download output. Fixture registration and owned test processes were removed. Native wizard interaction was not rerun for this artifact.
+
+Candidate verification exposed an early inspector probe calling app.isReady before Electron exposed app; the bounded probe now waits only for that unavailable API condition. Other exceptions still fail. Subsequent full-suite attempts retained a hidden-event fixture renderer crash, an attention-resume timeout with the page already closed during capture, and an automatic-focus assertion with no explicit foreground destination. Localized diagnostic reruns pass but do not explain those failures. Failure copies are preserved under work/session-registry-release. Main-process lifecycle/native termination observers now retain evidence when renderer JavaScript is unavailable. The automatic-focus check now first establishes a separate owned about:blank foreground window, then requires that it remain focused and that the course stay unfocused; the window is removed after the check. This passes locally and strengthens foreground ownership coverage, without establishing the cause of the earlier sole-window observation. All profiles and hooks are private fixtures; no live client is enrolled.
+
+These are test-harness changes, not additional product fixes. The quiet post-game memory target, unexplained runtime observations, real-client certification and native Mac/signing gates remain open. Current installer suite status is authoritative at work/installer-test/result.json; historical or localized green results cannot substitute for it.
+
+## Product acceptance coverage
 
 | Requirement | Current evidence | Remaining gate |
 | --- | --- | --- |

@@ -13,6 +13,12 @@ for(const kind of ['canvas-focus-away','window-blur','minimize','hidden-event-fi
  const env={...process.env,CCC_TEST_MODE:'1',CCC_DATA_DIR:path.join(profile,'data'),CCC_TEST_HOME:path.join(profile,'home')};delete env.ELECTRON_RUN_AS_NODE;
  try{
   app=await electron.launch({executablePath:process.env.CCC_EXECUTABLE,env,timeout:30000});page=await app.firstWindow();
+  // Preserve native termination details even when the page can no longer run JS.
+  await app.evaluate(({app,BrowserWindow})=>{
+   globalThis.__focusProcessFailures=[];
+   app.on('child-process-gone',(_event,details)=>globalThis.__focusProcessFailures.push({source:'child',type:details.type,reason:details.reason,exitCode:details.exitCode}));
+   for(const w of BrowserWindow.getAllWindows())w.webContents.on('render-process-gone',(_event,details)=>globalThis.__focusProcessFailures.push({source:'renderer',reason:details.reason,exitCode:details.exitCode}));
+  });
   // Playwright's focused-page emulation masks native blur/visibility signals.
   const cdp=await page.context().newCDPSession(page);await cdp.send('Emulation.setFocusEmulationEnabled',{enabled:false});
   await observePointerInput(page);await observeRoundWrites(app);
@@ -58,7 +64,7 @@ for(const kind of ['canvas-focus-away','window-blur','minimize','hidden-event-fi
   assert.equal(recovered.round.strokes,before.round.strokes+1,'Recovery counted an interrupted stroke');
   assert.equal(writer.dropped,0,'Save observer dropped records');
   results.push({kind,observed:true,passed:true,initialAim,before,interrupted,released,restored,recovered,nativeBefore,nativeInterrupted,writer});
- }catch(error){results.push({kind,observed:false,error:String(error),profile,observations,events:await page?.evaluate(()=>window.__dragEvidence).catch(()=>null)});}
+ }catch(error){results.push({kind,observed:false,error:String(error),profile,observations,processFailures:await app?.evaluate(()=>globalThis.__focusProcessFailures).catch(()=>null),events:await page?.evaluate(()=>window.__dragEvidence).catch(()=>null)});}
  finally{await app?.close().catch(()=>{});}
 }
 const passed=results.every(r=>r.passed);
