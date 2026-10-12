@@ -20,7 +20,9 @@ for(const file of providers)await writeFile(file,'{"hooks":{},"fixture":"preserv
 const digest=async file=>createHash('sha256').update(await readFile(file)).digest('hex');
 const providerHashes=await Promise.all(providers.map(digest));
 const env={...process.env,HOME:paths.home,USERPROFILE:paths.home,APPDATA:paths.appData,LOCALAPPDATA:paths.appData,TEMP:paths.temp,TMP:paths.temp,PATH:''};
+const legacyControllerFixture=env.CCC_LEGACY_CONTROLLER_FIXTURE==='1';
 for(const key of Object.keys(env))if(key.startsWith('CCC_')||key==='ELECTRON_RUN_AS_NODE'||key==='NODE_OPTIONS')delete env[key];
+if(legacyControllerFixture)env.CCC_WINDOW_WORKER='0';
 const sessions=[],checks=[];let browser,phase='launch primary';
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(fn,timeout=15000){const deadline=Date.now()+timeout;while(!await fn()){if(Date.now()>deadline)throw new Error(`Timeout: ${phase}`);await pause(50);}}

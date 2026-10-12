@@ -64,7 +64,7 @@ try{
     checks.push(`silent ${operation} refuses the running game with exit2, preserving its PID, exact acknowledged round, registration, payload and provider fixture files`);
   }
   await app.close();app=undefined;
-  await run(process.execPath,['scripts/test-installer-handoff.mjs'],0,false,{...process.env,CCC_EXECUTABLE:executable,CCC_WINDOW_WORKER:'0'});
+  await run(process.execPath,['scripts/test-installer-handoff.mjs'],0,false,{...process.env,CCC_EXECUTABLE:executable,CCC_LEGACY_CONTROLLER_FIXTURE:'1'});
   checks.push('installed production singleton delivers installer-quit, saves the acknowledged shot and restores exact progress with private paths');
   const priorRegistration=registration(),priorSave=await digest(path.join(data,'country-club.sqlite'));
   const priorFiles=await Promise.all(files.map(name=>digest(path.join(target,name))));
