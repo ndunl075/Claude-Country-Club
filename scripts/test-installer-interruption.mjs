@@ -21,6 +21,16 @@ function registration(){
   if(!raw)return null;const record=JSON.parse(raw);assert(!Array.isArray(record),'Ambiguous installations preserved');
   const file=/^"([^"]+)"/.exec(record.UninstallString??'')?.[1];assert(file&&path.dirname(file).toLowerCase()===target.toLowerCase(),'Installation outside fixture preserved');return record;
 }
+function staleFixtureRegistration(){
+  const raw=execFileSync('powershell.exe',['-NoProfile','-Command',"[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Claude Country Club(?: [0-9].*)?$' } | Select-Object UninstallString | ConvertTo-Json -Compress"],{windowsHide:true,encoding:'utf8'}).trim();
+  if(!raw)return undefined;const value=JSON.parse(raw);assert(!Array.isArray(value),'Ambiguous installation registration; use a disposable account.');
+  const file=/^"([^"]+)"/.exec(value.UninstallString??'')?.[1];
+  const scoped=path.resolve(work).toLowerCase()+path.sep;
+  assert(file&&path.resolve(path.dirname(file)).toLowerCase().startsWith(scoped),'Installation outside fixture preserved');return file;
+}
+const staleUninstaller=staleFixtureRegistration();
+if(staleUninstaller)await new Promise((resolve,reject)=>{const child=spawn(staleUninstaller,['/S'],{windowsHide:true});child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error(`Scoped fixture uninstaller exited ${code}`)));});
+if(staleUninstaller){const deadline=Date.now()+30_000;while(staleFixtureRegistration()){if(Date.now()>deadline)throw new Error('Scoped fixture uninstaller did not remove its registration.');await new Promise(resolve=>setTimeout(resolve,200));}}
 assert.equal(registration(),null,'Start with no registered Country Club installation');
 assert(!(await exists(path.join(process.env.APPDATA,'Claude Country Club/config-patches.json'))),'Live integration ledger preserved; use a disposable account');
 await mkdir(path.join(home,'.codex'),{recursive:true});
