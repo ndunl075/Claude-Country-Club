@@ -273,6 +273,12 @@ async function runWindowWorkerControllerProbe() {
     windowWorkerBridge=undefined;child.kill(); throw error;
   }
 }
+async function runWindowWorkerSmoke() {
+  await startPractice();
+  await new Promise(resolve=>setTimeout(resolve,500));
+  console.log('CCC_WINDOW_WORKER_SMOKE_OK');
+  app.quit();
+}
 function installIPC() {
   const handle=(name:string,fn:(...args:any[])=>unknown) => ipcMain.handle(`ccc:${name}`,(event,...args)=> {
     if (!window || event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || !event.senderFrame.url.startsWith('ccc://app/')) throw new Error('Untrusted IPC sender');
@@ -412,6 +418,7 @@ else app.whenReady().then(async()=> {
     tray.setContextMenu(Menu.buildFromTemplate([{label:'Open Country Club',click:()=>void requestOpen('dashboard')},{label:'Practice a round',click:()=>void requestOpen('practice')},{label:'Pause automatic play',click:()=>{store.setSettings({automatic:false});reconcile();}},{type:'separator'},{label:'Quit',click:()=>app.quit()}]));
     tray.on('click',()=>void requestOpen('dashboard'));
     try {await startBroker();} catch {diagnose('BROKER_UNAVAILABLE','Automatic connections are unavailable. Practice still works. Repair the application to restore the helper.');}
+    if (testing && workerRenderer && process.env.CCC_WINDOW_WORKER_SMOKE==='1') { await runWindowWorkerSmoke(); return; }
     if (testing && process.env.CCC_WINDOW_WORKER_CONTROLLER_PROBE==='1') { await runWindowWorkerControllerProbe(); app.quit(); return; }
     const interval=setInterval(()=>{if(registry.expire())reconcile();},60_000);interval.unref();
   } catch(error) { if(!background && systemHolds.size===0)dialog.showErrorBox('Country Club could not start',error instanceof Error?error.message:'Your saved data was preserved. Please repair the application.');quitting=true;app.quit(); }
