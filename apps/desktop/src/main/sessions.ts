@@ -16,11 +16,6 @@ export class SessionRegistry {
     const old = this.sessions.get(key);
     const turns = this.turns.get(key) ?? new Set<string>();
     if (event.kind === 'start' && event.turnId && turns.has(event.turnId)) return false;
-    if (event.turnId) {
-      turns.add(event.turnId);
-      if (turns.size > 128) turns.delete(turns.values().next().value!);
-      this.turns.set(key, turns);
-    }
     const session: AgentSession = old ? { ...old } : { key, provider: event.provider, state: 'unknown', generation: 0, updatedAt: now, reliable: false };
     if (event.kind === 'start') {
       if (!event.turnId && old && ['working','unknown','attention'].includes(old.state)) {
@@ -45,6 +40,13 @@ export class SessionRegistry {
         case 'interrupted': session.state = 'interrupted'; break;
         case 'session-ended': session.state = 'closed'; break;
       }
+    }
+    // Rejected activity or mismatched events must not retain orphan history or
+    // prevent a later valid start with the same native turn identity.
+    if (event.turnId) {
+      turns.add(event.turnId);
+      if (turns.size > 128) turns.delete(turns.values().next().value!);
+      this.turns.set(key, turns);
     }
     if (!old && event.turnId) session.turnId = event.turnId;
     session.source = event.adapterVersion === 'synthetic' && event.sessionKey === 'local-demo' ? 'demo' : 'local-hook';
