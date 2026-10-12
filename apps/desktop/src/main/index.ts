@@ -116,7 +116,7 @@ function cancelPark() { if(parkTimer)clearTimeout(parkTimer);parkTimer=undefined
 async function stopWindowWorker(bridge: NonNullable<typeof windowWorkerBridge>, child: ChildProcess | undefined) {
   // Renderer persistence is controller-owned, so a failed presentation-child
   // shutdown may be bounded without risking a game checkpoint or integration.
-  await bridge.request('quit',{}).catch(()=>undefined);
+  await Promise.race([bridge.request('quit',{}).catch(()=>undefined),new Promise(resolve=>setTimeout(resolve,1_000))]);
   if(!child||child.exitCode!==null)return;
   await Promise.race([new Promise(resolve=>child.once('exit',resolve)),new Promise(resolve=>setTimeout(resolve,1_000))]);
   if(child.exitCode===null)child.kill();
@@ -195,8 +195,8 @@ async function recoverRenderer() {
       return Promise.reject(new Error('Denied worker request'));
     });
     windowWorkerChild=launched.child;windowWorkerBridge=launched.bridge;
-    launched.child.on('exit',()=>{if(windowWorkerBridge===launched.bridge){windowWorkerBridge=undefined;windowWorkerChild=undefined;}});
-    try{await launched.bridge.start();}catch(error){if(windowWorkerBridge===launched.bridge){windowWorkerBridge=undefined;windowWorkerChild=undefined;}throw error;}
+    launched.child.on('exit',()=>{if(windowWorkerBridge===launched.bridge){windowWorkerBridge=undefined;windowWorkerChild=undefined;}(globalThis as Record<string,unknown>).__cccWindowWorkerTestRequest=undefined;});
+    try{await launched.bridge.start();if(testing&&process.env.CCC_TEST_CONTROLLER_INSPECT==='1')(globalThis as Record<string,unknown>).__cccWindowWorkerTestRequest=(command:string)=>launched.bridge.request(command,{});}catch(error){if(windowWorkerBridge===launched.bridge){windowWorkerBridge=undefined;windowWorkerChild=undefined;}(globalThis as Record<string,unknown>).__cccWindowWorkerTestRequest=undefined;throw error;}
     return;
   }
   if(rendererRecovery){await rendererRecovery;return;}
@@ -425,6 +425,9 @@ else app.whenReady().then(async()=> {
     // IPC and startup state are ready; createWindow installs the course protocol
     // before creating a renderer. Consume the latest queued request once.
     uiReady=true;
+    if(testing&&process.env.CCC_TEST_CONTROLLER_INSPECT==='1'){
+      (globalThis as Record<string,unknown>).__cccControllerQuit=()=>app.quit();
+    }
     const initialOpen=queuedOpen ?? (!background && !startupOpenSuppressed?'dashboard':undefined);
     queuedOpen=undefined;openedByUser=false;
     if(initialOpen)await requestOpen(initialOpen);
@@ -456,13 +459,16 @@ app.on('window-all-closed',()=>{});
 app.on('before-quit',event=>{
   if(!quitting && store){
     event.preventDefault();if(quitPending)return;quitPending=true;practice=false;
-    const save=window && !window.isDestroyed()?freezeAndHide():Promise.resolve();
+    const save=(workerRenderer&&windowWorkerBridge)||(window&&!window.isDestroyed())?freezeAndHide():Promise.resolve();
     void save.finally(async()=>{
       // Diagnostic I/O cannot hold quitting indefinitely or delay gameplay saves.
       await Promise.race([diagnosticLog.flush(),new Promise(resolve=>setTimeout(resolve,500))]);
+      const bridge=windowWorkerBridge,child=windowWorkerChild;
+      windowWorkerBridge=undefined;windowWorkerChild=undefined;
+      if(bridge)await stopWindowWorker(bridge,child);
       quitting=true;app.quit();
     });return;
   }
-  quitting=true;windowWorkerChild?.kill();broker?.stdin.end();broker?.kill();try{store?.close();}catch{};tray?.destroy();
+  quitting=true;broker?.stdin.end();broker?.kill();try{store?.close();}catch{};tray?.destroy();
 });
 }

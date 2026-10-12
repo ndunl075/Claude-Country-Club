@@ -59,11 +59,14 @@ while ($frontier.Count) {
 }
 $result = @($records | ForEach-Object {
   $item = $_
-  $ownedProcess = Get-Process -Id $item.Pid -ErrorAction Stop
   try {
+    # A child can exit between the Tool Help snapshot and this metadata read.
+    # It is already gone, so omit it rather than turning a cleanup observation
+    # into a false failure.
+    $ownedProcess = Get-Process -Id $item.Pid -ErrorAction Stop
     [pscustomobject]@{ pid=[int]$item.Pid; parentPid=[int]$item.Parent; name=$item.Name;
       workingSetKiB=$ownedProcess.WorkingSet64/1024; privateKiB=$ownedProcess.PrivateMemorySize64/1024;
       executable=$ownedProcess.Path; created=$ownedProcess.StartTime.ToUniversalTime().ToString('o') }
-  } finally { $ownedProcess.Dispose() }
+  } catch { return } finally { if ($ownedProcess) { $ownedProcess.Dispose() } }
 })
 $result | ConvertTo-Json -Compress

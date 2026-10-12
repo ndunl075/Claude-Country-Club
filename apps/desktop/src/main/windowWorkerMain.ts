@@ -17,10 +17,10 @@ function startWorker() {
   let controllerRequest = 0;
   const controllerPending = new Map<string, { resolve: (payload: unknown) => void; reject: () => void }>();
   const uiRoot=path.join(__dirname,'renderer');
-  const respond = (id: string, ok: boolean, payload?: unknown, errorCode?: string) => {
-    if (generation === undefined || !process.connected) return;
-    process.send?.({ protocolVersion: 1, type: 'response', generation, id, ok, ...(payload === undefined ? {} : { payload }), ...(errorCode ? { errorCode } : {}) });
-  };
+  const respond = (id: string, ok: boolean, payload?: unknown, errorCode?: string) => new Promise<void>(resolve => {
+    if (generation === undefined || !process.connected) { resolve(); return; }
+    process.send?.({ protocolVersion: 1, type: 'response', generation, id, ok, ...(payload === undefined ? {} : { payload }), ...(errorCode ? { errorCode } : {}) }, () => resolve());
+  });
   const open = async () => {
     if (!window || window.isDestroyed()) {
       window = new BrowserWindow({ title: 'Claude Country Club', width: 620, height: 600, show: false, autoHideMenuBar: true, backgroundColor: '#f5f2e9', webPreferences: { preload:path.join(__dirname,'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false } });
@@ -70,7 +70,9 @@ function startWorker() {
       else if (message.command === 'state') { window?.webContents.send('ccc:state',message.payload); respond(message.id, true); }
       else if (message.command === 'freeze') { window?.webContents.send('ccc:freeze',message.payload); respond(message.id, true); }
       else if (message.command === 'controller-state') { respond(message.id, true, await requestController('state', { requested: 'worker' })); }
-      else if (message.command === 'quit') { respond(message.id, true); app.quit(); }
+      else if (process.env.CCC_TEST_CONTROLLER_INSPECT==='1' && message.command === 'test-security') { const preferences=(window?.webContents as unknown as {getLastWebPreferences:()=>Electron.WebPreferences}|undefined)?.getLastWebPreferences();respond(message.id,true,{sandbox:preferences?.sandbox,contextIsolation:preferences?.contextIsolation,nodeIntegration:preferences?.nodeIntegration,webSecurity:preferences?.webSecurity}); }
+      else if (process.env.CCC_TEST_CONTROLLER_INSPECT==='1' && message.command === 'test-practice') { respond(message.id,true,await window?.webContents.executeJavaScript('window.countryClub.practice().then(()=>!!document.querySelector(\"canvas\"))')); }
+      else if (message.command === 'quit') { await respond(message.id, true); app.quit(); }
       else respond(message.id, false, undefined, 'UNKNOWN_COMMAND');
     } catch { respond(message.id, false, undefined, 'WINDOW_FAILURE'); }
   });

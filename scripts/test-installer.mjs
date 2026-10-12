@@ -34,7 +34,11 @@ assert(!(await exists(liveLedger)), 'Live integration ledger exists. Use a dispo
 await mkdir(artifacts, { recursive: true });
 async function run(command, args, env = process.env, verbatim = false, expectedCode = 0) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: root, env, windowsHide: true, windowsVerbatimArguments: verbatim, stdio: 'inherit' });
+    // These established Playwright fixtures attach to the controller's
+    // BrowserWindow. The shipped worker path has dedicated packaged coverage;
+    // retain this compatibility matrix until each fixture drives the worker.
+    const childEnv=command===process.execPath?{...env,CCC_WINDOW_WORKER:'0'}:env;
+    const child = spawn(command, args, { cwd: root, env:childEnv, windowsHide: true, windowsVerbatimArguments: verbatim, stdio: 'inherit' });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Installer test exceeded 180 seconds.')); }, 180_000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('exit', code => { clearTimeout(timer); code === expectedCode ? resolve() : reject(new Error(`${path.basename(command)} exited ${code}; expected ${expectedCode}`)); });
