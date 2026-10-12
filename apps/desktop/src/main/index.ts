@@ -34,7 +34,10 @@ if (!testing && !windowWorkerMode && !app.requestSingleInstanceLock()) app.quit(
 let window: BrowserWindow | undefined, tray: Tray | undefined, store: Store, integrations: IntegrationManager;
 let windowWorkerBridge: import('./windowWorkerBridge').WindowWorkerBridge | undefined;
 let windowWorkerChild: ChildProcess | undefined;
-const workerRenderer = process.env.CCC_WINDOW_WORKER === '1';
+// Shipped desktop launches use the controller/worker split. Development and
+// existing source harnesses remain opt-in because Electron's sandbox access
+// to an arbitrary checkout is an environment concern, not a product setting.
+const workerRenderer = process.env.CCC_WINDOW_WORKER === '1' || (app.isPackaged && process.env.CCC_WINDOW_WORKER !== '0');
 let broker: ChildProcessWithoutNullStreams | undefined, brokerReady = false, quitting = false;
 let quitPending = false;
 let uiReady = false, startupOpenSuppressed = false;
@@ -102,18 +105,32 @@ function systemHold(reason: 'sleep' | 'lock', active: boolean) {
   if(active)systemHolds.add(reason);else systemHolds.delete(reason);
   if(active){queuedOpen=undefined;if(!uiReady)startupOpenSuppressed=true;}
   // Resume/unlock never revives work observed before or during the hold.
-  practice=false;registry.disconnect();void freezeAndHide();
+  practice=false;registry.disconnect();
+  // System listeners are bound before storage so a locked startup cannot
+  // create or show a renderer. It also means an early callback must retain
+  // the hold without publishing state through an as-yet-unopened store.
+  if(store)void freezeAndHide();
 }
 function cancelEligibility() { if (eligibleTimer) clearTimeout(eligibleTimer); eligibleTimer=undefined; }
 function cancelPark() { if(parkTimer)clearTimeout(parkTimer);parkTimer=undefined; }
+async function stopWindowWorker(bridge: NonNullable<typeof windowWorkerBridge>, child: ChildProcess | undefined) {
+  // Renderer persistence is controller-owned, so a failed presentation-child
+  // shutdown may be bounded without risking a game checkpoint or integration.
+  await bridge.request('quit',{}).catch(()=>undefined);
+  if(!child||child.exitCode!==null)return;
+  await Promise.race([new Promise(resolve=>child.once('exit',resolve)),new Promise(resolve=>setTimeout(resolve,1_000))]);
+  if(child.exitCode===null)child.kill();
+}
 function schedulePark() {
   cancelPark();
+  const delay=testing&&process.env.CCC_WINDOW_WORKER_RESOURCE_PROBE==='1'?100:30_000;
   parkTimer=setTimeout(()=>{
-    if(workerRenderer && windowWorkerBridge && !practice && !eligible() && !rendererRecovery && !freezing){const bridge=windowWorkerBridge;windowWorkerBridge=undefined;windowWorkerChild=undefined;void bridge.request('quit',{}).catch(()=>undefined);return;}
+    if(testing&&process.env.CCC_WINDOW_WORKER_RESOURCE_PROBE==='1')console.log(`CCC_WINDOW_WORKER_PARK_CHECK ${JSON.stringify({worker:!!windowWorkerBridge,practice,eligible:eligible(),recovering:!!rendererRecovery,freezing:!!freezing})}`);
+    if(workerRenderer && windowWorkerBridge && !practice && !eligible() && !rendererRecovery && !freezing){const bridge=windowWorkerBridge,child=windowWorkerChild;windowWorkerBridge=undefined;windowWorkerChild=undefined;void stopWindowWorker(bridge,child);return;}
     if(window && !window.isDestroyed() && !window.isVisible() && !practice && !eligible() && !rendererRecovery && !freezing){
       rememberBounds();const parked=window;window=undefined;parked.destroy();
     }
-  },30_000);
+  },delay);
   parkTimer.unref();
 }
 async function freezeAndHide() {
@@ -418,6 +435,15 @@ else app.whenReady().then(async()=> {
     tray.setContextMenu(Menu.buildFromTemplate([{label:'Open Country Club',click:()=>void requestOpen('dashboard')},{label:'Practice a round',click:()=>void requestOpen('practice')},{label:'Pause automatic play',click:()=>{store.setSettings({automatic:false});reconcile();}},{type:'separator'},{label:'Quit',click:()=>app.quit()}]));
     tray.on('click',()=>void requestOpen('dashboard'));
     try {await startBroker();} catch {diagnose('BROKER_UNAVAILABLE','Automatic connections are unavailable. Practice still works. Repair the application to restore the helper.');}
+    if (testing && workerRenderer && process.env.CCC_WINDOW_WORKER_RESOURCE_PROBE==='1') {
+      await startPractice();
+      console.log('CCC_WINDOW_WORKER_RESOURCE_ACTIVE');
+      while ((globalThis as Record<string, unknown>).__cccWindowWorkerMeasure !== 'park') await new Promise(resolve=>setTimeout(resolve,25));
+      practice=false;
+      await freezeAndHide();
+      console.log('CCC_WINDOW_WORKER_RESOURCE_HIDDEN');
+      return;
+    }
     if (testing && workerRenderer && process.env.CCC_WINDOW_WORKER_SMOKE==='1') { await runWindowWorkerSmoke(); return; }
     if (testing && process.env.CCC_WINDOW_WORKER_CONTROLLER_PROBE==='1') { await runWindowWorkerControllerProbe(); app.quit(); return; }
     const interval=setInterval(()=>{if(registry.expire())reconcile();},60_000);interval.unref();

@@ -59,6 +59,8 @@
     "test:window-worker-process": "npm run build && node scripts/test-window-worker-process.mjs",
     "test:window-worker-controller": "npm run build && node scripts/test-window-worker-controller.mjs",
     "test:window-worker-smoke": "npm run build && node scripts/test-window-worker-smoke.mjs",
+    "test:window-worker-packaged": "node scripts/test-window-worker-packaged.mjs",
+    "measure:window-worker": "npm run build && node scripts/measure-window-worker.mjs",
     "package:dir": "npm run build && electron-builder --dir",
     "package:win": "npm run build && electron-builder --win nsis --x64",
     "package:mac": "npm run build && electron-builder --mac pkg --publish never",

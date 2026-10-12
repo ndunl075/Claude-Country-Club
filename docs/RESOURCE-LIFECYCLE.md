@@ -1,6 +1,19 @@
 # Resource lifecycle investigation
 
-October 12, 2026. This experiment supports an implementation direction; it is not a shipped architecture or a completed resource gate.
+October 12, 2026. The integrated controller/window-worker probe now establishes the private presentation-child lifecycle below. Packaged user launches use this path; the legacy installed harness migration remains in progress.
+
+## Integrated worker measurement
+
+The current unpacked Windows build was launched with the controller retaining SQLite, settings, tray, native broker, lifecycle handling and integration ownership. It opened the authenticated inherited-IPC worker, froze and hid the course through the normal controller path, then parked the worker. A read-only Tool Help descendant snapshot identified the worker only among direct controller children by its private `--ccc-window-worker` marker.
+
+| Sample | Summed working set | Summed private bytes |
+| --- | ---: | ---: |
+| Active controller plus worker | 523.19 MiB | 398.66 MiB |
+| Parked controller after worker exit | **191.69 MiB** | 180.23 MiB |
+
+The parked sample is under the 200 MiB working-set target on this Windows reference machine. It includes the controller, its remaining Chromium descendants, and the native helper. The worker and its descendants are absent after the controller receives its freeze/hide acknowledgement, requests graceful quit, then bounds a failed presentation-child shutdown to one second before terminating that still-owned child. No controller-owned save, broker, tray, configuration or session state is terminated. This is one local packaged measurement, not a broad hardware ceiling. Active memory is higher than the monolithic app and must remain an explicit tradeoff.
+
+Reproduce with `CCC_EXECUTABLE` set to the unpacked packaged executable and `node scripts/measure-window-worker.mjs`. Evidence is `work/window-worker-resources/result.json`.
 
 ## Paired evidence
 

@@ -10,11 +10,18 @@ export type LaunchedWindowWorker = { child: ChildProcess; bridge: WindowWorkerBr
 // profile because it does not own persistent application state.
 export function launchWindowWorker(generation: number, onRequest?: (command: string, payload: unknown) => Promise<unknown> | unknown): LaunchedWindowWorker {
   const childData = path.join(app.getPath('userData'), 'window-worker');
-  const args = app.isPackaged ? ['--ccc-window-worker'] : [app.getAppPath(), '--ccc-window-worker'];
+  const testInspector=process.env.CCC_TEST_WORKER_INSPECT==='1';
+  const args = [...(testInspector?['--inspect=0']:[]),...(app.isPackaged ? ['--ccc-window-worker'] : [app.getAppPath(), '--ccc-window-worker'])];
   const child = spawn(process.execPath, args, {
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true,
+    stdio: ['ignore', 'ignore', testInspector?'pipe':'ignore', 'ipc'], windowsHide: true,
     env: { ...process.env, CCC_DATA_DIR: childData, CCC_WINDOW_WORKER_CONTROLLER_PROBE: undefined }
   });
+  if(testInspector&&child.stderr){
+    child.stderr.on('data',bytes=>{
+      const endpoint=/Debugger listening on (ws:\/\/\S+)/.exec(bytes.toString())?.[1];
+      if(endpoint)(globalThis as Record<string,unknown>).__cccWindowWorkerInspector=endpoint;
+    });
+  }
   const bridge = new WindowWorkerBridge(child as unknown as WindowWorkerPort, { generation, onRequest });
   return { child, bridge };
 }
