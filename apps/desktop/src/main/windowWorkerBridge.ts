@@ -70,6 +70,9 @@ export class WindowWorkerBridge {
     if (this.stopped || !isCurrentWorkerMessage(value, this.generation, this.nonce)) return;
     const message: WindowWorkerToController = value;
     if (message.type === 'ready') { this.ready = true; this.settleStartup?.resolve(undefined); this.settleStartup = undefined; this.startup = undefined; return; }
+    // Worker-to-controller requests are reserved for the next relay layer.
+    // This transport does not treat an unsolicited request as a response.
+    if (message.type === 'request') return;
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);

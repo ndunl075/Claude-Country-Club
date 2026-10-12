@@ -5,6 +5,7 @@ const nonce = 'a'.repeat(48);
 test('accepts bounded versioned startup and response messages', () => {
   expect(parseControllerMessage({ protocolVersion: 1, type: 'init', generation: 4, nonce })).toEqual({ protocolVersion: 1, type: 'init', generation: 4, nonce });
   expect(parseControllerMessage({ protocolVersion: 1, type: 'command', generation: 4, id: 'open', command: 'open', payload: { view: 'practice' } })?.type).toBe('command');
+  expect(parseWorkerMessage({ protocolVersion: 1, type: 'request', generation: 4, id: 'state', command: 'state', payload: {} })?.type).toBe('request');
   expect(parseWorkerMessage({ protocolVersion: 1, type: 'response', generation: 4, id: 'open', ok: true, payload: { visible: true } })).toMatchObject({ type: 'response', ok: true });
 });
 test('rejects malformed, stale and oversized worker messages', () => {
