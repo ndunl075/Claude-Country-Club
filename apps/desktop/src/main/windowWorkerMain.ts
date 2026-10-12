@@ -67,6 +67,8 @@ function startWorker() {
     try {
       if (message.command === 'open') { await open(); respond(message.id, true, { visible: !!window?.isVisible() }); }
       else if (message.command === 'hide') { window?.hide(); respond(message.id, true, { visible: false }); }
+      else if (message.command === 'state') { window?.webContents.send('ccc:state',message.payload); respond(message.id, true); }
+      else if (message.command === 'freeze') { window?.webContents.send('ccc:freeze',message.payload); respond(message.id, true); }
       else if (message.command === 'controller-state') { respond(message.id, true, await requestController('state', { requested: 'worker' })); }
       else if (message.command === 'quit') { respond(message.id, true); app.quit(); }
       else respond(message.id, false, undefined, 'UNKNOWN_COMMAND');

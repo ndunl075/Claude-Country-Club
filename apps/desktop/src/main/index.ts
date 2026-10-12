@@ -32,6 +32,7 @@ if (testing && process.env.CCC_DATA_DIR) app.setPath('userData', path.resolve(pr
 protocol.registerSchemesAsPrivileged([{ scheme: 'ccc', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 if (!testing && !windowWorkerMode && !app.requestSingleInstanceLock()) app.quit();
 let window: BrowserWindow | undefined, tray: Tray | undefined, store: Store, integrations: IntegrationManager;
+let windowWorkerBridge: import('./windowWorkerBridge').WindowWorkerBridge | undefined;
 let broker: ChildProcessWithoutNullStreams | undefined, brokerReady = false, quitting = false;
 let quitPending = false;
 let uiReady = false, startupOpenSuppressed = false;
@@ -91,7 +92,7 @@ function state(): HostState {
   return { settings: store.settings(), sessions: registry.list(), integrations: integrationCache, selectedSession: selected, practice, suspended, brokerReady, diagnostics:[...diagnostics], version:app.getVersion(),platform:process.platform };
 }
 let integrationCache: HostState['integrations'] = [];
-function publish() { if (store && window && !window.isDestroyed() && !rendererCrashed) window.webContents.send('ccc:state',state()); }
+function publish() { const next=state(); if (store && window && !window.isDestroyed() && !rendererCrashed) window.webContents.send('ccc:state',next); if(windowWorkerBridge)void windowWorkerBridge.request('state',next).catch(()=>undefined); }
 async function refreshIntegrations() { integrationCache = (await integrations.list()).map(info=>({...info,client:clientCache[info.provider] ?? {status:'not-checked',note:'Choose Check version to inspect an installed native client. No client is launched automatically.'}})); publish(); }
 function waitKey() { const s = registry.get(selected); return s ? `${s.key}:${s.generation}` : undefined; }
 function eligible() { const s=registry.get(selected); return lockStateKnown && systemHolds.size===0 && (store.settings().automatic || demo) && !practice && s?.state==='working' && s.reliable && dismissedWait!==waitKey(); }
@@ -229,16 +230,18 @@ async function startBroker() {
 async function runWindowWorkerControllerProbe() {
   const { child, bridge } = launchWindowWorker(1,(command,payload)=>{
     if(command==='api')return relayWindowWorkerApi(payload,controllerHandlers);
+    if(command==='frozen'&&payload&&typeof payload==='object'&&typeof (payload as {id?:unknown}).id==='string'){const id=(payload as {id:string}).id;frozenWaiters.get(id)?.();frozenWaiters.delete(id);return undefined;}
     if(command==='state')return { relay: 'controller', payload };
     return Promise.reject(new Error('Unexpected worker request'));
   });
   try {
     await bridge.start();
+    windowWorkerBridge=bridge;
     await bridge.request('open', {});
     const relay=await bridge.request('controller-state', {});
     if(JSON.stringify(relay)!==JSON.stringify({relay:'controller',payload:{requested:'worker'}}))throw new Error('Window worker relay response mismatch.');
     await bridge.request('hide', {});
-    await bridge.request('quit', {});
+    await bridge.request('quit', {});windowWorkerBridge=undefined;
     await new Promise<void>((resolve, reject) => {
       const timer=setTimeout(()=>reject(new Error('Window worker did not exit.')),5_000);
       child.once('exit',code=>{clearTimeout(timer);code===0?resolve():reject(new Error(`Window worker exited ${code}.`));});
@@ -247,7 +250,7 @@ async function runWindowWorkerControllerProbe() {
     console.log('CCC_WINDOW_WORKER_CONTROLLER_PROBE_OK');
   } catch (error) {
     console.error('CCC_WINDOW_WORKER_CONTROLLER_PROBE_FAILED',error instanceof Error?error.message:String(error));
-    child.kill(); throw error;
+    windowWorkerBridge=undefined;child.kill(); throw error;
   }
 }
 function installIPC() {
