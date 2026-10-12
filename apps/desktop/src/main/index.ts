@@ -225,10 +225,12 @@ async function startBroker() {
   broker.on('exit',()=>{if(socketDirectory)void fs.rmdir(socketDirectory).catch(()=>undefined);brokerReady=false;registry.disconnect(); if (!quitting) {reconcile();diagnose('BROKER_STOPPED','Local connection stopped. Restart Country Club to reconnect.');}});
 }
 async function runWindowWorkerControllerProbe() {
-  const { child, bridge } = launchWindowWorker(1);
+  const { child, bridge } = launchWindowWorker(1,(command,payload)=>command==='state' ? { relay: 'controller', payload } : Promise.reject(new Error('Unexpected worker request')));
   try {
     await bridge.start();
     await bridge.request('open', {});
+    const relay=await bridge.request('controller-state', {});
+    if(JSON.stringify(relay)!==JSON.stringify({relay:'controller',payload:{requested:'worker'}}))throw new Error('Window worker relay response mismatch.');
     await bridge.request('hide', {});
     await bridge.request('quit', {});
     await new Promise<void>((resolve, reject) => {
