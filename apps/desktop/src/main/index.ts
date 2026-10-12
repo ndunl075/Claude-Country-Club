@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, screen, shell } from 'electron';
 import { Tray } from 'electron';
-import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -33,6 +33,8 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'ccc', privileges: { standard: t
 if (!testing && !windowWorkerMode && !app.requestSingleInstanceLock()) app.quit();
 let window: BrowserWindow | undefined, tray: Tray | undefined, store: Store, integrations: IntegrationManager;
 let windowWorkerBridge: import('./windowWorkerBridge').WindowWorkerBridge | undefined;
+let windowWorkerChild: ChildProcess | undefined;
+const workerRenderer = process.env.CCC_WINDOW_WORKER === '1';
 let broker: ChildProcessWithoutNullStreams | undefined, brokerReady = false, quitting = false;
 let quitPending = false;
 let uiReady = false, startupOpenSuppressed = false;
@@ -107,6 +109,7 @@ function cancelPark() { if(parkTimer)clearTimeout(parkTimer);parkTimer=undefined
 function schedulePark() {
   cancelPark();
   parkTimer=setTimeout(()=>{
+    if(workerRenderer && windowWorkerBridge && !practice && !eligible() && !rendererRecovery && !freezing){const bridge=windowWorkerBridge;windowWorkerBridge=undefined;windowWorkerChild=undefined;void bridge.request('quit',{}).catch(()=>undefined);return;}
     if(window && !window.isDestroyed() && !window.isVisible() && !practice && !eligible() && !rendererRecovery && !freezing){
       rememberBounds();const parked=window;window=undefined;parked.destroy();
     }
@@ -118,6 +121,11 @@ async function freezeAndHide() {
   if (freezing) return freezing;
   const epoch = ++freezeVersion;
   freezing = (async () => {
+    if(workerRenderer&&windowWorkerBridge){
+      const id=randomUUID();
+      await new Promise<void>(resolve=>{const timer=setTimeout(()=>{frozenWaiters.delete(id);resolve();},180);frozenWaiters.set(id,()=>{clearTimeout(timer);resolve();});void windowWorkerBridge?.request('freeze',id).catch(()=>{frozenWaiters.delete(id);resolve();});});
+      if(freezeVersion===epoch){await windowWorkerBridge?.request('hide',{}).catch(()=>undefined);schedulePark();}return;
+    }
     if (window && !window.isDestroyed() && !rendererCrashed) {
       const id=randomUUID();
       await new Promise<void>(resolve => {
@@ -162,6 +170,18 @@ async function recoverRenderer() {
   if(!uiReady || !store)throw new Error('Country Club is still starting.');
   if(quitting || quitPending)return;
   cancelPark();
+  if(workerRenderer){
+    if(windowWorkerBridge)return;
+    const launched=launchWindowWorker(freezeVersion+1,(command,payload)=>{
+      if(command==='api')return relayWindowWorkerApi(payload,controllerHandlers);
+      if(command==='frozen'&&payload&&typeof payload==='object'&&typeof (payload as {id?:unknown}).id==='string'){const id=(payload as {id:string}).id;frozenWaiters.get(id)?.();frozenWaiters.delete(id);return undefined;}
+      return Promise.reject(new Error('Denied worker request'));
+    });
+    windowWorkerChild=launched.child;windowWorkerBridge=launched.bridge;
+    launched.child.on('exit',()=>{if(windowWorkerBridge===launched.bridge){windowWorkerBridge=undefined;windowWorkerChild=undefined;}});
+    try{await launched.bridge.start();}catch(error){if(windowWorkerBridge===launched.bridge){windowWorkerBridge=undefined;windowWorkerChild=undefined;}throw error;}
+    return;
+  }
   if(rendererRecovery){await rendererRecovery;return;}
   if (!rendererCrashed && window && !window.isDestroyed()) return;
   if (!rendererRecovery) {
@@ -177,7 +197,7 @@ async function showDashboard() {
   openedByUser=true; dismissedWait=waitKey(); const epoch=++freezeVersion; suspended=true; practice=false; cancelEligibility();
   await recoverRenderer();
   if(quitting || quitPending || systemHolds.size || freezeVersion!==epoch)return;
-  restoreBounds('dashboard'); window?.show(); publish();
+  if(workerRenderer)await windowWorkerBridge?.request('open',{});else {restoreBounds('dashboard'); window?.show();} publish();
 }
 async function startPractice() {
   if(quitting || quitPending || systemHolds.size)return;
@@ -186,7 +206,7 @@ async function startPractice() {
   openedByUser=true; const epoch=++freezeVersion; cancelEligibility();
   await recoverRenderer();
   if(quitting || quitPending || systemHolds.size || freezeVersion!==epoch)return;
-  practice=true; suspended=false; restoreBounds('dashboard'); window?.show(); publish();
+  practice=true; suspended=false;if(workerRenderer)await windowWorkerBridge?.request('open',{});else {restoreBounds('dashboard'); window?.show();} publish();
 }
 async function requestOpen(mode: 'dashboard' | 'practice') {
   try { await (mode==='practice'?startPractice():showDashboard()); }
@@ -410,6 +430,6 @@ app.on('before-quit',event=>{
       quitting=true;app.quit();
     });return;
   }
-  quitting=true;broker?.stdin.end();broker?.kill();try{store?.close();}catch{};tray?.destroy();
+  quitting=true;windowWorkerChild?.kill();broker?.stdin.end();broker?.kill();try{store?.close();}catch{};tray?.destroy();
 });
 }
