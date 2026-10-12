@@ -38,7 +38,9 @@ try{
   assert(!(await exists(transaction)));assert(!(await exists(target)));assert.equal(registration(),null);await privateUnchanged();
   checks.push('fresh partial extraction recovery removes only staged files and leaves no installation or registration');
   await run(installer,['/S',`/D=${target}`],0,true);assert.equal(registration().DisplayVersion,'0.1.0');
-  const env={...process.env,CCC_TEST_MODE:'1',CCC_DATA_DIR:data,CCC_TEST_HOME:home};delete env.ELECTRON_RUN_AS_NODE;
+  // Legacy Playwright fixtures attach to the controller BrowserWindow. The
+  // shipped packaged-worker lifecycle has dedicated acceptance coverage.
+  const env={...process.env,CCC_TEST_MODE:'1',CCC_DATA_DIR:data,CCC_TEST_HOME:home,CCC_WINDOW_WORKER:'0'};delete env.ELECTRON_RUN_AS_NODE;
   app=await electron.launch({executablePath:executable,env,timeout:30000});let page=await app.firstWindow();
   await page.getByRole('button',{name:'Play local practice',exact:true}).click();await dragShot(page,{angle:180,power:15});
   await expect.poll(async()=>{const r=await page.evaluate(()=>window.countryClub.loadRound());return r?.state?.shotId===1&&r.state.velocity.x===0&&r.state.velocity.y===0;},{timeout:15000}).toBe(true);
