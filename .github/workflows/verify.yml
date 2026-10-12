@@ -85,6 +85,7 @@ jobs:
             work/input-conflicts/*.json
             work/focus-interruption/*.json
             work/midflight-crash/*.json
+            work/installer-handoff/result.json
             work/input-provenance/failure.png
             work/progress-files/result.json
             work/progress-files/failure.png

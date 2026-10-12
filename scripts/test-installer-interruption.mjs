@@ -28,8 +28,8 @@ const auth=path.join(home,'.codex/auth.json'),hooks=path.join(home,'.codex/hooks
 await writeFile(auth,'{"fixture":"private-auth-preserved"}\n');await writeFile(hooks,'{"hooks":{},"fixture":"unrelated-config-preserved"}\n');
 const privateHashes=await Promise.all([auth,hooks].map(digest));
 const privateUnchanged=async()=>assert.deepEqual(await Promise.all([auth,hooks].map(digest)),privateHashes);
-async function run(file,args,expected=0,verbatim=false){
-  await new Promise((resolve,reject)=>{const child=spawn(file,args,{windowsHide:true,windowsVerbatimArguments:verbatim,stdio:'inherit'});const timer=setTimeout(()=>{child.kill();reject(new Error('Fixture command exceeded 180 seconds'));},180000);child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('exit',code=>{clearTimeout(timer);code===expected?resolve():reject(new Error(`${path.basename(file)} exited ${code}, expected ${expected}`));});});
+async function run(file,args,expected=0,verbatim=false,env=process.env){
+  await new Promise((resolve,reject)=>{const child=spawn(file,args,{windowsHide:true,windowsVerbatimArguments:verbatim,env,stdio:'inherit'});const timer=setTimeout(()=>{child.kill();reject(new Error('Fixture command exceeded 180 seconds'));},180000);child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('exit',code=>{clearTimeout(timer);code===expected?resolve():reject(new Error(`${path.basename(file)} exited ${code}, expected ${expected}`));});});
 }
 async function partialStage(){await mkdir(path.join(transaction,'new/resources'),{recursive:true});await writeFile(path.join(transaction,'new/resources/app.asar'),'interrupted extraction fixture');}
 const checks=[];let app,lockProcess;
@@ -62,6 +62,8 @@ try{
     checks.push(`silent ${operation} refuses the running game with exit2, preserving its PID, exact acknowledged round, registration, payload and provider fixture files`);
   }
   await app.close();app=undefined;
+  await run(process.execPath,['scripts/test-installer-handoff.mjs'],0,false,{...process.env,CCC_EXECUTABLE:executable});
+  checks.push('installed production singleton delivers installer-quit, saves the acknowledged shot and restores exact progress with private paths');
   const priorRegistration=registration(),priorSave=await digest(path.join(data,'country-club.sqlite'));
   const priorFiles=await Promise.all(files.map(name=>digest(path.join(target,name))));
   async function intact(){assert.deepEqual(registration(),priorRegistration);assert.deepEqual(await Promise.all(files.map(name=>digest(path.join(target,name)))),priorFiles);assert.equal(await digest(path.join(data,'country-club.sqlite')),priorSave);await privateUnchanged();}
@@ -87,7 +89,7 @@ try{
   checks.push('old installed application reopens with exact acknowledged drag shot after interrupted and refused replacement');
   await run(path.join(target,'Uninstall Claude Country Club.exe'),['/S']);await expect.poll(()=>exists(executable),{timeout:30000}).toBe(false);assert.equal(registration(),null);await privateUnchanged();assert(await exists(path.join(data,'country-club.sqlite')));
   checks.push('Unicode, spaces and ampersand fixture path supports packaged launch, recovery and clean uninstall with progress retained');
-  await writeFile(path.join(work,'result.json'),JSON.stringify({passed:true,installer,sha256:await digest(installer),checks,limitations:['Running-uninstall refusal is measured through a byte-identical copied uninstaller and the documented _?= target option, so the final exit is synchronous; the ordinary launcher exit is not the operation result.','The app runs with an isolated test profile; production single-instance delivery and the interactive installer close request remain separate checks.','Partial extraction is constructed through the bundled coordinator; no native wizard Cancel is clicked during extraction.','File-lock refusal is a real Windows filesystem fault; physical disk-full, power loss and a clean OS profile remain unverified.']},null,2));
+  await writeFile(path.join(work,'result.json'),JSON.stringify({passed:true,installer,sha256:await digest(installer),checks,limitations:['Running-uninstall refusal is measured through a byte-identical copied uninstaller and the documented _?= target option, so the final exit is synchronous; the ordinary launcher exit is not the operation result.','Production singleton handoff uses pre-entry private path overrides and owned inspectors; native installer dialog and normal uninstrumented launch remain separate checks.','Partial extraction is constructed through the bundled coordinator; no native wizard Cancel is clicked during extraction.','File-lock refusal is a real Windows filesystem fault; physical disk-full, power loss and a clean OS profile remain unverified.']},null,2));
   console.log('Native installer interruption acceptance passed.');
 }catch(error){await writeFile(path.join(work,'result.json'),JSON.stringify({passed:false,error:String(error),checks,target},null,2));throw error;}
 finally{if(lockProcess&&lockProcess.exitCode===null&&lockProcess.signalCode===null){lockProcess.stdin.end('\n');await new Promise(resolve=>{const timer=setTimeout(()=>{lockProcess.kill();resolve();},10000);lockProcess.once('exit',()=>{clearTimeout(timer);resolve();});});}await app?.close().catch(()=>{});}

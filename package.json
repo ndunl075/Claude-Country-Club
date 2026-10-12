@@ -45,6 +45,7 @@
     "test:diagnostic-log": "node scripts/test-diagnostic-log.mjs",
     "test:installer": "node scripts/test-installer.mjs",
     "test:installer-interruption": "node scripts/test-installer-interruption.mjs",
+    "test:installer-handoff": "node scripts/test-installer-handoff.mjs",
     "test:upgrade": "node scripts/test-upgrade.mjs",
     "test:save-faults": "node scripts/test-save-faults.mjs",
     "test:midflight-crash": "node scripts/test-midflight-crash.mjs",
