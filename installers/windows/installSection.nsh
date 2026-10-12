@@ -10,8 +10,11 @@ StrCpy $appExe "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
 Var /GLOBAL keepShortcuts
 StrCpy $keepShortcuts "false"
 
-ExecWait '"$PLUGINSDIR\ccc-installer.exe" prepare "$cccTarget"' $R0
-${If} $R0 != 0
+StrCpy $cccStage "prepare"
+nsExec::ExecToStack '"$PLUGINSDIR\ccc-installer.exe" prepare "$cccTarget"'
+Pop $cccResult
+Pop $cccDetails
+${If} $cccResult != "0"
   Goto transaction_failed
 ${EndIf}
 StrCpy $INSTDIR "$cccTarget.ccc-transaction\new"
@@ -30,10 +33,16 @@ File "/oname=${UNINSTALL_FILENAME}" "${UNINSTALLER_OUT_FILE}"
 ; Move out of the staged directory before attempting directory renames.
 SetOutPath "$PLUGINSDIR"
 StrCpy $INSTDIR "$cccTarget"
-ExecWait '"$PLUGINSDIR\ccc-installer.exe" commit "$cccTarget"' $R0
-${If} $R0 != 0
+StrCpy $cccStage "commit"
+nsExec::ExecToStack '"$PLUGINSDIR\ccc-installer.exe" commit "$cccTarget"'
+Pop $cccResult
+Pop $cccDetails
+${If} $cccResult != "0"
   Goto transaction_failed
 ${EndIf}
+StrCpy $cccStage "registration"
+StrCpy $cccResult "registry error"
+StrCpy $cccDetails "Windows could not write Country Club's installation registration."
 ClearErrors
 !insertmacro registryAddInstallInfo
 ${If} ${Errors}
@@ -42,8 +51,11 @@ ${EndIf}
 !insertmacro addStartMenuLink "false"
 !insertmacro addDesktopLink "false"
 StrCpy $launchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
-ExecWait '"$PLUGINSDIR\ccc-installer.exe" finalize "$cccTarget"' $R0
-${If} $R0 != 0
+StrCpy $cccStage "finalize"
+nsExec::ExecToStack '"$PLUGINSDIR\ccc-installer.exe" finalize "$cccTarget"'
+Pop $cccResult
+Pop $cccDetails
+${If} $cccResult != "0"
   Goto transaction_failed
 ${EndIf}
 !insertmacro customInstall
@@ -52,9 +64,16 @@ Goto transaction_done
 transaction_failed:
   StrCpy $INSTDIR "$cccTarget"
   SetOutPath "$PLUGINSDIR"
-  ExecWait '"$PLUGINSDIR\ccc-installer.exe" recover "$cccTarget"' $R1
+  ; Keep the original stage/result/details separate from the recovery attempt.
+  DetailPrint "Installation failed during $cccStage; result: $cccResult"
+  DetailPrint "Coordinator details (bounded): $cccDetails"
+  nsExec::ExecToStack '"$PLUGINSDIR\ccc-installer.exe" recover "$cccTarget"'
+  Pop $cccRecoveryResult
+  Pop $cccRecoveryDetails
+  DetailPrint "Recovery result: $cccRecoveryResult"
+  DetailPrint "Recovery details (bounded): $cccRecoveryDetails"
   IfSilent transaction_abort
-  MessageBox MB_OK|MB_ICONEXCLAMATION "Country Club could not complete installation. Your saved rounds and provider settings were preserved. If recovery files remain at $cccTarget.ccc-transaction, keep them for repair and retry this installer."
+  MessageBox MB_OK|MB_ICONEXCLAMATION "Country Club could not complete installation. Your saved rounds and provider settings were preserved.$\r$\n$\r$\nStage: $cccStage$\r$\nResult: $cccResult$\r$\nRecovery result: $cccRecoveryResult$\r$\n$\r$\nIf recovery files remain at $cccTarget.ccc-transaction, keep them for repair and retry this installer.$\r$\n$\r$\nCoordinator details (may be truncated or unreadable):$\r$\n$cccDetails$\r$\n$\r$\nRecovery details (may be truncated or unreadable):$\r$\n$cccRecoveryDetails"
   transaction_abort:
   SetErrorLevel 5
   Abort

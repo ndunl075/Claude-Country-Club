@@ -1,7 +1,7 @@
 // Real Windows filesystem faults against the bundled transaction coordinator.
 // All installations and provider homes are guarded workspace fixtures.
 import { spawn,execFileSync } from 'node:child_process';
-import { mkdir,mkdtemp,readFile,writeFile,access,cp } from 'node:fs/promises';
+import { mkdir,mkdtemp,readFile,writeFile,access,cp,readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -47,6 +47,13 @@ try{
   const files=['Claude Country Club.exe','resources/app.asar','resources/ccc-hook.exe','ccc-package.json'];
   const priorFiles=await Promise.all(files.map(name=>digest(path.join(target,name))));
   async function intact(){assert.deepEqual(registration(),priorRegistration);assert.deepEqual(await Promise.all(files.map(name=>digest(path.join(target,name)))),priorFiles);assert.equal(await digest(path.join(data,'country-club.sqlite')),priorSave);await privateUnchanged();}
+  // The interactive template may append the product folder to a custom path.
+  // Exercise the resulting mismatch separately from native page delivery.
+  const nestedTarget=path.join(target,'Claude Country Club');
+  assert(!(await exists(nestedTarget))&&!(await exists(nestedTarget+'.ccc-transaction')));
+  await run(installer,['/S','/REPAIR',`/D=${nestedTarget}`],5,true);
+  await intact();if(await exists(nestedTarget))assert.deepEqual(await readdir(nestedTarget),[],'Refused destination may contain only the empty directory NSIS initializes');assert(!(await exists(nestedTarget+'.ccc-transaction')));
+  checks.push('repair at an appended product subfolder is refused with exit5 and exact prior registration, payload, SQLite and provider files preserved; native wizard causality remains unverified');
   await run(coordinator,['prepare',target]);await partialStage();await run(coordinator,['recover',target]);await intact();assert(!(await exists(transaction)));
   checks.push('existing partial extraction recovery preserves registration, application payloads, exact SQLite and fixture provider files');
   await run(coordinator,['prepare',target]);await cp(target,path.join(transaction,'new'),{recursive:true});
