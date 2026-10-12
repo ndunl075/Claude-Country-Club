@@ -22,6 +22,7 @@ import { diagnosticReport, DiagnosticReviews } from './diagnosticExport';
 import { DiagnosticLog, DIAGNOSTIC_CHUNK_BYTES } from './diagnosticLog';
 import { runWindowWorker } from './windowWorkerMain';
 import { launchWindowWorker } from './windowWorkerLauncher';
+import { relayWindowWorkerApi } from './windowWorkerApiRelay';
 
 app.setName('Claude Country Club');
 const testing = process.env.CCC_TEST_MODE === '1';
@@ -48,6 +49,7 @@ const registry = new SessionRegistry();
 const diagnostics: Diagnostic[] = [];
 const diagnosticReviews=new DiagnosticReviews();
 const frozenWaiters = new Map<string, () => void>();
+const controllerHandlers = new Map<string, (...args: any[]) => unknown>();
 const systemHolds = new Set<'sleep' | 'lock'>();
 let lockStateKnown = false;
 const dataDir = app.getPath('userData');
@@ -225,7 +227,11 @@ async function startBroker() {
   broker.on('exit',()=>{if(socketDirectory)void fs.rmdir(socketDirectory).catch(()=>undefined);brokerReady=false;registry.disconnect(); if (!quitting) {reconcile();diagnose('BROKER_STOPPED','Local connection stopped. Restart Country Club to reconnect.');}});
 }
 async function runWindowWorkerControllerProbe() {
-  const { child, bridge } = launchWindowWorker(1,(command,payload)=>command==='state' ? { relay: 'controller', payload } : Promise.reject(new Error('Unexpected worker request')));
+  const { child, bridge } = launchWindowWorker(1,(command,payload)=>{
+    if(command==='api')return relayWindowWorkerApi(payload,controllerHandlers);
+    if(command==='state')return { relay: 'controller', payload };
+    return Promise.reject(new Error('Unexpected worker request'));
+  });
   try {
     await bridge.start();
     await bridge.request('open', {});
@@ -250,18 +256,19 @@ function installIPC() {
     if (JSON.stringify(args).length>300_000) throw new Error('IPC payload too large');
     return fn(...args);
   });
-  handle('state',()=>state());
-  handle('settings',(patch:unknown)=>{const settings=store.setSettings(patch); if (patch && typeof patch === 'object' && 'selectedSession' in patch) selected=settings.selectedSession; if (!testing && patch && typeof patch === 'object' && 'startAtLogin' in patch) app.setLoginItemSettings({openAtLogin:settings.startAtLogin,args:['--ccc-background']}); reconcile();return state();});
-  handle('load',()=> { try { return store.load(); } catch { diagnose('SAVE_RECOVERY','The saved round could not be read. Export your data before resetting progress.'); const raw=store.db.prepare('SELECT revision FROM round_save WHERE id=1').get() as {revision:number}|undefined; return raw ? {revision:raw.revision,state:null} : null; } });
-  handle('save',(value:unknown,revision:number)=> { try {return store.save(value,revision);} catch (e) {diagnose('SAVE_FAILED','Progress could not be saved. Play is paused until storage is available.'); suspended=true;publish();throw e;} });
-  handle('practice',startPractice);
-  handle('hide',async()=>{dismissedWait=waitKey();practice=false;await freezeAndHide();});
-  handle('select',(key:string|null)=>{if(key!==null&&!registry.get(key))throw new Error('Unknown session');selected=key;store.setSettings({selectedSession:key});dismissedWait=undefined;practice=false;void freezeAndHide().then(reconcile);});
+  const register=(name:string,fn:(...args:any[])=>unknown)=>{controllerHandlers.set(name,fn);handle(name,fn);};
+  register('state',()=>state());
+  register('settings',(patch:unknown)=>{const settings=store.setSettings(patch); if (patch && typeof patch === 'object' && 'selectedSession' in patch) selected=settings.selectedSession; if (!testing && patch && typeof patch === 'object' && 'startAtLogin' in patch) app.setLoginItemSettings({openAtLogin:settings.startAtLogin,args:['--ccc-background']}); reconcile();return state();});
+  register('load',()=> { try { return store.load(); } catch { diagnose('SAVE_RECOVERY','The saved round could not be read. Export your data before resetting progress.'); const raw=store.db.prepare('SELECT revision FROM round_save WHERE id=1').get() as {revision:number}|undefined; return raw ? {revision:raw.revision,state:null} : null; } });
+  register('save',(value:unknown,revision:number)=> { try {return store.save(value,revision);} catch (e) {diagnose('SAVE_FAILED','Progress could not be saved. Play is paused until storage is available.'); suspended=true;publish();throw e;} });
+  register('practice',startPractice);
+  register('hide',async()=>{dismissedWait=waitKey();practice=false;await freezeAndHide();});
+  register('select',(key:string|null)=>{if(key!==null&&!registry.get(key))throw new Error('Unknown session');selected=key;store.setSettings({selectedSession:key});dismissedWait=undefined;practice=false;void freezeAndHide().then(reconcile);});
   const provider=(p:unknown):Provider=>{if(p!=='claude'&&p!=='codex')throw new Error('Invalid provider');return p;};
-  handle('preview',(p:unknown)=>integrations.preview(provider(p)));
-  handle('apply',async(preview:IntegrationPreview)=>{await integrations.apply(preview);await refreshIntegrations();return state();});
-  handle('remove',async(p:unknown)=>{await integrations.remove(provider(p));await refreshIntegrations();return state();});
-  handle('inspect-client',async(p:unknown,choose:unknown)=>{
+  register('preview',(p:unknown)=>integrations.preview(provider(p)));
+  register('apply',async(preview:IntegrationPreview)=>{await integrations.apply(preview);await refreshIntegrations();return state();});
+  register('remove',async(p:unknown)=>{await integrations.remove(provider(p));await refreshIntegrations();return state();});
+  register('inspect-client',async(p:unknown,choose:unknown)=>{
     const selectedProvider=provider(p);
     if(choose!==undefined && typeof choose!=='boolean')throw new Error('Invalid executable selection');
     let executable:string|undefined;
@@ -269,15 +276,15 @@ function installIPC() {
     clientCache[selectedProvider]=await inspectClient(selectedProvider,{home:testing&&process.env.CCC_TEST_HOME?process.env.CCC_TEST_HOME:os.homedir(),directory:dataDir,...(executable?{executable}:{}),...(testing?{env:{PATH:''}}:{})});
     await refreshIntegrations();return state();
   });
-  handle('simulate',(kind:unknown)=>{
+  register('simulate',(kind:unknown)=>{
     if (!['start','attention','stop'].includes(String(kind))) throw new Error('Invalid demo event');
     demo=kind!=='stop'; practice=false; selected='codex:local-demo';dismissedWait=undefined;
     if(kind==='start')demoTurn=randomUUID();
     accept({protocolVersion:1,eventId:randomUUID(),sessionKey:'local-demo',turnId:demoTurn,provider:'codex',adapterVersion:'synthetic',kind: kind as AgentEvent["kind"]} satisfies AgentEvent);
   });
-  handle('export',async()=> {const result=await dialog.showSaveDialog(window!,{defaultPath:'Country-Club-Progress.json',filters:[{name:'Progress JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return false;await writeProgressExport(result.filePath,JSON.stringify(store.export(),null,2));return true;});
-  handle('diagnostics-preview',()=>diagnosticReviews.create(diagnosticReport(state(),process.arch)));
-  handle('diagnostics-export',async(id:unknown)=>{
+  register('export',async()=> {const result=await dialog.showSaveDialog(window!,{defaultPath:'Country-Club-Progress.json',filters:[{name:'Progress JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return false;await writeProgressExport(result.filePath,JSON.stringify(store.export(),null,2));return true;});
+  register('diagnostics-preview',()=>diagnosticReviews.create(diagnosticReport(state(),process.arch)));
+  register('diagnostics-export',async(id:unknown)=>{
     diagnosticReviews.read(id);
     const result=await dialog.showSaveDialog(window!,{defaultPath:'Country-Club-Diagnostics.json',filters:[{name:'Diagnostic JSON',extensions:['json']}]});
     if(result.canceled||!result.filePath)return false;
@@ -286,7 +293,7 @@ function installIPC() {
     const content=diagnosticReviews.read(id);
     await writeProgressExport(result.filePath,content);diagnosticReviews.complete(id as string);return true;
   });
-  handle('import',async()=> {
+  register('import',async()=> {
     const result=await dialog.showOpenDialog(window!,{properties:['openFile'],filters:[{name:'Progress JSON',extensions:['json']}]});if(result.canceled)return false;
     const info=await fs.stat(result.filePaths[0]);if(!info.isFile()||info.size>300_000)throw new Error('Progress file too large or not a regular file');
     const content=await fs.readFile(result.filePaths[0]);if(content.byteLength>300_000)throw new Error('Progress file too large');
@@ -296,8 +303,8 @@ function installIPC() {
     await freezeAndHide();
     try {store.import(data);await showDashboard();window?.webContents.reload();return true;}catch(error){await showDashboard();throw error;}
   });
-  handle('docs',()=>shell.openExternal('https://github.com/ndunl075/Claude-Country-Club'));
-  handle('updates',()=>shell.openExternal('https://github.com/ndunl075/Claude-Country-Club/releases'));
+  register('docs',()=>shell.openExternal('https://github.com/ndunl075/Claude-Country-Club'));
+  register('updates',()=>shell.openExternal('https://github.com/ndunl075/Claude-Country-Club/releases'));
   ipcMain.on('ccc:frozen',(event,id)=>{if(event.sender===window?.webContents && typeof id==='string'){frozenWaiters.get(id)?.();frozenWaiters.delete(id);}});
 }
 function ensureCourseProtocol() {
