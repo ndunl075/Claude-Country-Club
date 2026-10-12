@@ -47,6 +47,7 @@
     "test:installer-interruption": "node scripts/test-installer-interruption.mjs",
     "test:upgrade": "node scripts/test-upgrade.mjs",
     "test:save-faults": "node scripts/test-save-faults.mjs",
+    "test:midflight-crash": "node scripts/test-midflight-crash.mjs",
     "test:corrupt-startup": "node scripts/test-corrupt-startup.mjs",
     "measure:performance": "node scripts/measure-performance.mjs",
     "measure:resources": "node scripts/measure-resources.mjs",
