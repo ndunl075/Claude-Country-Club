@@ -29,6 +29,8 @@ The controller remains the sole owner of SQLite, settings, identity/connection f
 
 Messages need bounded payloads, protocol version, request identity and worker generation. Validate both endpoints; reject responses from stale workers. Keep save revision checks and acknowledgements, and never turn bridge failure into success. Native hook frames remain separate from larger UI IPC payloads. Connection tokens must not appear in command lines; an arbitrary worker flag must not attach to the controller.
 
+The first source building block now exists in `windowWorkerProtocol.ts`: protocol version1, 256KiB JSON bound, 48-hex startup nonce, positive bounded generation, safe request IDs and separate controller/worker message parsers. Unit tests cover valid startup/response traffic plus oversized, malformed and stale/wrong-nonce rejection. This module has no runtime worker wiring yet, so it changes neither the app's current single-process behavior nor the installer.
+
 The controller retains eligibility, selection, ambiguity, lock/sleep holds and dismissal. Stop/attention during worker startup cancels pending show; automatic show remains inactive. Freeze/hide keeps the accepted-event latency contract. Worker exit requires a settled acknowledgement or an explicit failure path preserving the last acknowledged round. Crash recovery cannot fabricate a stroke or revive a completed wait. Practice remains usable without optional integration.
 
 Installer save-and-close must settle and terminate both processes through the real singleton owner before changing files. Rerun running-game refusal, repair/upgrade recovery, process cleanup, mid-flight crash recovery and the installed suite. Native Mac focus/Spaces/sleep/PKG checks remain external gates.
