@@ -1,0 +1,13 @@
+import { describe, expect, it } from 'vitest';
+import { SessionRegistry } from '../apps/desktop/src/main/sessions';
+import { AgentEvent, validateEvent } from '../packages/contracts';
+let serial=0;
+const event = (kind: AgentEvent['kind'], extra: Partial<AgentEvent> = {}): AgentEvent => ({ protocolVersion:1, eventId:`e${serial++}`,provider:'codex',adapterVersion:'1',sessionKey:'test',turnId:'turn1',kind,...extra });
+describe('root session lifecycle', () => {
+  it('does not let an old stop finish a new turn', () => { const r=new SessionRegistry(); r.accept(event('start')); r.accept(event('start',{turnId:'turn2'})); r.accept(event('stop')); expect(r.get('codex:test')?.state).toBe('working'); });
+  it('deduplicates events and ignores subagent completion', () => { const r=new SessionRegistry(), e=event('start'); r.accept(e); expect(r.accept(e)).toBe(false); r.accept(event('stop',{rootSessionKey:'parent'})); expect(r.get('codex:test')?.state).toBe('working'); });
+  it('requires correlated evidence to resume attention', () => { const r=new SessionRegistry(); r.accept(event('start')); r.accept(event('attention')); r.accept(event('activity',{turnId:undefined})); expect(r.get('codex:test')?.state).toBe('attention'); r.accept(event('activity')); expect(r.get('codex:test')?.state).toBe('working'); });
+  it('marks ambiguous starts and stale sessions unknown', () => { const r=new SessionRegistry(); r.accept(event('start',{turnId:undefined}),0); r.accept(event('start',{turnId:undefined}),1); expect(r.get('codex:test')?.reliable).toBe(false); r.accept(event('start'),10); r.expire(900_011); expect(r.get('codex:test')?.state).toBe('unknown'); });
+  it('keeps independent sessions separate and clears connection loss', () => { const r=new SessionRegistry(); r.accept(event('start')); r.accept(event('start',{sessionKey:'other'})); r.accept(event('stop')); expect(r.get('codex:other')?.state).toBe('working'); r.disconnect(); expect(r.get('codex:other')?.state).toBe('unknown'); });
+  it('rejects invalid input and drops unapproved fields', () => { expect(()=>validateEvent({...event('start'),sessionKey:'../bad'})).toThrow(); expect(validateEvent({...event('start'),prompt:'SECRET'})).not.toHaveProperty('prompt'); });
+});

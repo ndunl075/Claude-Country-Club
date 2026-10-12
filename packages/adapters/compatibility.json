@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": 1,
+  "adapterVersion": "1.2",
+  "fixtureVersion": "2026-10-11-windows-claude-exec",
+  "certifiedClients": [],
+  "providers": {
+    "claude": {
+      "candidateSurface": "local-cli",
+      "installation": "user-settings-command-hooks",
+      "configuration": ".claude/settings.json",
+      "nativeTurnIdentity": "not-established",
+      "windowsCommandForm": "documented-exec-command-and-args",
+      "signals": {
+        "start": ["UserPromptSubmit"],
+        "activity": ["PreToolUse"],
+        "attention": ["PermissionRequest", "Notification:permission_prompt", "PreToolUse:AskUserQuestion", "PreToolUse:ExitPlanMode", "Elicitation"],
+        "stop": ["Stop", "SessionEnd"],
+        "interrupt": [],
+        "failure": ["StopFailure"]
+      },
+      "limitations": ["No installed client version has been certified", "No reliable interruption signal enrolled", "Arbitrary questions and custom interaction tools may lack attention signals", "Custom --agent roots are rejected conservatively", "Requires provider-native hook trust review"]
+    },
+    "codex": {
+      "candidateSurface": "local-cli",
+      "installation": "user-hooks-command-hooks",
+      "configuration": ".codex/hooks.json",
+      "nativeTurnIdentity": "documented-turn_id",
+      "signals": {
+        "start": ["UserPromptSubmit"],
+        "activity": ["PreToolUse"],
+        "attention": ["PermissionRequest"],
+        "stop": ["Stop", "SessionEnd"],
+        "interrupt": ["Interrupt"],
+        "failure": []
+      },
+      "limitations": ["No installed client version has been certified", "Questions without permission hooks may lack attention signals", "Requires provider-native hook trust review"]
+    }
+  },
+  "unverifiedSurfaces": ["desktop", "ide", "browser", "cloud", "remote"],
+  "references": ["https://code.claude.com/docs/en/hooks", "https://learn.chatgpt.com/docs/hooks"]
+}

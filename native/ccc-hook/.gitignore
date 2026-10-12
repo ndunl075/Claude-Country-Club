@@ -1,0 +1,5 @@
+cache/
+modcache/
+test-temp/
+*.exe
+ccc-hook-darwin-*

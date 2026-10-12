@@ -1,0 +1,174 @@
+name: Desktop verification
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            arch: amd64
+            target: win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/ccc-hook/go.mod
+          cache-dependency-path: native/ccc-hook/go.sum
+      - run: npm ci
+      - run: npm run verify
+      - run: npm run test:courses
+      - run: npm run verify:mac-helper-crossbuild
+      - run: npm run build
+        env:
+          CCC_BUILD_ARCH: ${{ matrix.arch }}
+      - run: npm run test:e2e
+      - if: matrix.target == 'win'
+        run: npx electron-builder --win nsis --x64 --publish never
+      - if: matrix.target == 'win'
+        run: npm run test:windows-hook-shells
+      - if: matrix.target == 'win'
+        run: npm run test:installer
+      - if: matrix.target == 'win'
+        run: npm run test:installer-interruption
+      - name: Complete nine holes through packaged controls
+        shell: pwsh
+        run: |
+          $env:CCC_EXECUTABLE = Join-Path (Get-Location) 'release/win-unpacked/Claude Country Club.exe'
+          npm run test:full-round
+          npm run test:gestures
+          npm run test:pointer-interruption
+          npm run test:input-provenance
+          npm run test:progress-files
+          npm run test:diagnostics-export
+          npm run test:startup-drag
+          npm run test:helper-faults
+          npm run test:broker-crash
+          npm run test:parked-lifecycle
+      - if: matrix.target == 'win'
+        run: npx electron-builder --win nsis --x64 --publish never --config.extraMetadata.version=0.1.1 --config.directories.output=work/upgrade-release
+      - if: matrix.target == 'win'
+        run: npm run test:upgrade
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unsigned-desktop-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            release/*Setup*.exe
+            release/*Setup*.pkg
+            work/e2e/*.png
+            work/e2e/*.json
+            work/installer-test/result.json
+            work/installer-interruption/result.json
+            work/upgrade-test/result.json
+            work/save-faults/result.json
+            work/save-faults/*.png
+            work/ui/result.json
+            work/ui/native-*.png
+            work/courses/result.json
+            work/full-round/result.json
+            work/full-round/*.png
+            work/gestures/result.json
+            work/pointer-interruption/result.json
+            work/pointer-interruption/failure.png
+            work/input-provenance/result.json
+            work/input-conflicts/*.json
+            work/focus-interruption/*.json
+            work/input-provenance/failure.png
+            work/progress-files/result.json
+            work/progress-files/failure.png
+            work/diagnostics-export/result.json
+            work/diagnostics-export/*.png
+            work/diagnostic-log/result.json
+            work/diagnostic-log/failure.png
+            work/startup-drag/result.json
+            work/helper-faults/result.json
+            work/consoleless-helper/result.json
+            work/windows-hook-shells/*.json
+            work/broker-crash/result.json
+            work/parked-lifecycle/result.json
+            work/background-startup/result.json
+            work/lazy-protocol/*.json
+            work/startup-ordering/*.json
+            work/startup-ordering/*.png
+            work/system-lifecycle/result.json
+            work/claude-lifecycle/*.json
+            work/claude-lifecycle/*.png
+            work/display-bounds/result.json
+            work/history-retention/result.json
+            work/private-identity/result.json
+            work/private-preview/result.json
+            work/client-discovery/result.json
+            work/client-discovery/fixture-*/phase.json
+            work/client-discovery/fixture-*/timeline.json
+            work/mac-helper-crossbuild/result.json
+            work/helper-build-info/result.json
+            work/package-verification/*.json
+          if-no-files-found: error
+  mac-preview:
+    name: Unsigned Mac preview (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+            goArch: arm64
+          - os: macos-15-intel
+            arch: x64
+            goArch: amd64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      CCC_BUILD_ARCH: ${{ matrix.goArch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/ccc-hook/go.mod
+          cache-dependency-path: native/ccc-hook/go.sum
+      - name: Confirm native runner architecture
+        run: node -e "if(process.arch !== '${{ matrix.arch }}') throw Error('Runner architecture mismatch')"
+      - run: npm ci
+      - run: npm run verify
+      - name: Prepare executable package resources
+        run: chmod +x installers/macos/Uninstall-Claude-Country-Club.command installers/macos/pkg-scripts/preinstall
+      - name: Validate package scripts and source policy
+        run: |
+          bash -n installers/macos/Uninstall-Claude-Country-Club.command
+          bash -n installers/macos/pkg-scripts/preinstall
+          node scripts/verify-mac.mjs --source
+      - run: npm run build
+      - run: npx electron-builder --mac pkg --${{ matrix.arch }} --publish never
+      - name: Validate PKG payload, cleanup and packaged app behavior
+        shell: bash
+        run: |
+          pkg=(release/*PREVIEW*-${{ matrix.arch }}.pkg)
+          test "${#pkg[@]}" -eq 1
+          node scripts/verify-mac.mjs --pkg "${pkg[0]}" --arch ${{ matrix.arch }} --smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: UNSIGNED-PREVIEW-mac-${{ matrix.arch }}
+          path: |
+            release/*PREVIEW*.pkg
+            work/mac-verification/result-*.json
+            work/package-verification/*.json
+            work/e2e/result.json
+            work/e2e/*.png
+          if-no-files-found: warn

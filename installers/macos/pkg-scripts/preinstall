@@ -1,0 +1,8 @@
+#!/bin/bash
+# Installer runs this preflight as root; it never touches user provider configuration.
+set -euo pipefail
+if /usr/bin/pgrep -x 'Claude Country Club' >/dev/null 2>&1; then
+  printf '%s\n' 'Quit Claude Country Club before installing or repairing. Your coding clients will not be stopped.' >&2
+  exit 1
+fi
+exit 0

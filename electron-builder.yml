@@ -1,0 +1,76 @@
+appId: com.countryclub.desktop
+productName: Claude Country Club
+directories:
+  output: release
+  buildResources: apps/desktop/build
+files:
+  - dist/main.cjs
+  - dist/preload.cjs
+  - dist/renderer/**/*
+  - dist/icon.png
+  - dist/compatibility.json
+  - package.json
+extraResources:
+  - from: dist/native
+    to: .
+    filter:
+      - ccc-hook*
+asar: true
+npmRebuild: false
+afterSign: scripts/package-manifest.cjs
+electronLanguages:
+  - en-US
+win:
+  extraResources:
+    - from: dist/native/ccc-installer.exe
+      to: ccc-installer.exe
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: apps/desktop/build/icon-v2.ico
+  artifactName: Claude-Country-Club-Setup-${version}-${arch}.${ext}
+nsis:
+  guid: e0e2b6b5-dc94-506c-b07b-3fd5ab2393ac
+  packElevateHelper: false
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  createStartMenuShortcut: true
+  runAfterFinish: false
+  deleteAppDataOnUninstall: false
+  include: installers/windows/custom.nsh
+  installerIcon: apps/desktop/build/icon-v2.ico
+  uninstallerIcon: apps/desktop/build/icon-v2.ico
+mac:
+  icon: apps/desktop/build/icon-v2.icns
+  target:
+    - target: pkg
+      arch: [arm64, x64]
+  category: public.app-category.games
+  artifactName: Claude-Country-Club-Setup-PREVIEW-${version}-${arch}.${ext}
+  hardenedRuntime: true
+  entitlements: apps/desktop/build/entitlements.mac.plist
+  entitlementsInherit: apps/desktop/build/entitlements.mac.plist
+  binaries:
+    - Contents/Resources/ccc-hook
+  extraResources:
+    - from: installers/macos/Uninstall-Claude-Country-Club.command
+      to: Uninstall-Claude-Country-Club.command
+  strictVerify: true
+pkg:
+  installLocation: /Applications
+  allowAnywhere: false
+  allowCurrentUserHome: true
+  allowRootDirectory: true
+  isRelocatable: false
+  isVersionChecked: true
+  hasStrictIdentifier: true
+  overwriteAction: upgrade
+  mustClose:
+    - com.countryclub.desktop
+  welcome: ../../../installers/macos/welcome.html
+  conclusion: ../../../installers/macos/conclusion.html
+  scripts: ../../../installers/macos/pkg-scripts
+publish: null

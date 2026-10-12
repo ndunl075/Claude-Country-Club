@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.sh text eol=lf
+*.command text eol=lf
+installers/macos/pkg-scripts/preinstall text eol=lf
+*.png binary
+*.ico binary
+*.icns binary

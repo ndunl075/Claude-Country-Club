@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+work/
+coverage/
+*.log
+native/ccc-hook/ccc-hook*
+!native/ccc-hook/*.go
+
+native/ccc-hook/cache/
+native/ccc-hook/modcache/
