@@ -54,6 +54,7 @@
     "measure:performance": "node scripts/measure-performance.mjs",
     "measure:resources": "node scripts/measure-resources.mjs",
     "measure:owned-processes": "node scripts/measure-owned-processes.mjs",
+    "measure:split-processes": "node scripts/measure-split-processes.mjs",
     "package:dir": "npm run build && electron-builder --dir",
     "package:win": "npm run build && electron-builder --win nsis --x64",
     "package:mac": "npm run build && electron-builder --mac pkg --publish never",
