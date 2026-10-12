@@ -318,7 +318,7 @@ These are initial engineering budgets to measure, not achieved benchmarks:
 
 Suspend rendering and audio while hidden; destroy or park the renderer if memory budgets require it, retaining the native session listener. Use event-driven activity rather than frequent process scans. Optional update checks are isolated from gameplay and are the only planned runtime network feature.
 
-Local packaged measurements and their limits are recorded in [PERFORMANCE.md](PERFORMANCE.md). The latest helper and warm lifecycle samples fit the initial latency budgets on the Windows reference machine. Chromium net logging recorded no HTTP/WebSocket URLs through startup and gameplay. The parked memory sum must include the Go helper, which Electron's metrics omit: the default packaged sample is 254.30 MiB and the graphics experiment 208.88 MiB, so the 200 MiB target is still open. These results do not certify all hardware or native Mac behavior.
+Local packaged measurements and their limits are recorded in [PERFORMANCE.md](PERFORMANCE.md) and [RESOURCE-LIFECYCLE.md](RESOURCE-LIFECYCLE.md). The latest helper and warm lifecycle samples fit the initial latency budgets on the Windows reference machine. Chromium net logging recorded no HTTP/WebSocket URLs through startup and gameplay. The parked memory sum must include the Go helper, which Electron's metrics omit: the current packaged sample is 259.14 MiB after normal renderer parking, so the 200 MiB target remains open. These results do not certify all hardware or native Mac behavior.
 
 ## Proposed source layout
 
