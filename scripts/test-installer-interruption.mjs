@@ -42,9 +42,27 @@ try{
   app=await electron.launch({executablePath:executable,env,timeout:30000});let page=await app.firstWindow();
   await page.getByRole('button',{name:'Play local practice',exact:true}).click();await dragShot(page,{angle:180,power:15});
   await expect.poll(async()=>{const r=await page.evaluate(()=>window.countryClub.loadRound());return r?.state?.shotId===1&&r.state.velocity.x===0&&r.state.velocity.y===0;},{timeout:15000}).toBe(true);
-  await page.evaluate(()=>window.countryClub.hide());const saved=await page.evaluate(()=>window.countryClub.loadRound());await app.close();app=undefined;
+  await page.evaluate(()=>window.countryClub.hide());const saved=await page.evaluate(()=>window.countryClub.loadRound());
+  const liveIdentity=await app.evaluate(()=>({pid:process.pid,executable:process.execPath}));
+  const liveRegistration=registration();
+  const files=['Claude Country Club.exe','resources/app.asar','resources/ccc-hook.exe','ccc-package.json','Uninstall Claude Country Club.exe'];
+  const liveFiles=await Promise.all(files.map(name=>digest(path.join(target,name))));
+  // NSIS's normal launcher reports its temporary-copy launch, not the final
+  // uninstall exit. Use its documented copied-executable/_?= wait pattern.
+  const uninstallProbe=path.join(fixture,'Uninstall-running-probe.exe');
+  await cp(path.join(target,'Uninstall Claude Country Club.exe'),uninstallProbe);
+  for(const operation of ['repair','uninstall']){
+    if(operation==='repair')await run(installer,['/S','/REPAIR',`/D=${target}`],2,true);
+    else await run(uninstallProbe,['/S',`_?=${target}`],2,true);
+    assert.deepEqual(await app.evaluate(()=>({pid:process.pid,executable:process.execPath})),liveIdentity,`${operation} replaced the running process`);
+    assert.deepEqual(await page.evaluate(()=>window.countryClub.loadRound()),saved,`${operation} changed acknowledged progress`);
+    assert.deepEqual(registration(),liveRegistration);
+    assert.deepEqual(await Promise.all(files.map(name=>digest(path.join(target,name)))),liveFiles);
+    assert(!(await exists(transaction)));await privateUnchanged();
+    checks.push(`silent ${operation} refuses the running game with exit2, preserving its PID, exact acknowledged round, registration, payload and provider fixture files`);
+  }
+  await app.close();app=undefined;
   const priorRegistration=registration(),priorSave=await digest(path.join(data,'country-club.sqlite'));
-  const files=['Claude Country Club.exe','resources/app.asar','resources/ccc-hook.exe','ccc-package.json'];
   const priorFiles=await Promise.all(files.map(name=>digest(path.join(target,name))));
   async function intact(){assert.deepEqual(registration(),priorRegistration);assert.deepEqual(await Promise.all(files.map(name=>digest(path.join(target,name)))),priorFiles);assert.equal(await digest(path.join(data,'country-club.sqlite')),priorSave);await privateUnchanged();}
   // The interactive template may append the product folder to a custom path.
@@ -69,7 +87,7 @@ try{
   checks.push('old installed application reopens with exact acknowledged drag shot after interrupted and refused replacement');
   await run(path.join(target,'Uninstall Claude Country Club.exe'),['/S']);await expect.poll(()=>exists(executable),{timeout:30000}).toBe(false);assert.equal(registration(),null);await privateUnchanged();assert(await exists(path.join(data,'country-club.sqlite')));
   checks.push('Unicode, spaces and ampersand fixture path supports packaged launch, recovery and clean uninstall with progress retained');
-  await writeFile(path.join(work,'result.json'),JSON.stringify({passed:true,installer,sha256:await digest(installer),checks,limitations:['Partial extraction is constructed through the bundled coordinator; no native wizard Cancel is clicked during extraction.','File-lock refusal is a real Windows filesystem fault; physical disk-full, power loss and a clean OS profile remain unverified.']},null,2));
+  await writeFile(path.join(work,'result.json'),JSON.stringify({passed:true,installer,sha256:await digest(installer),checks,limitations:['Running-uninstall refusal is measured through a byte-identical copied uninstaller and the documented _?= target option, so the final exit is synchronous; the ordinary launcher exit is not the operation result.','The app runs with an isolated test profile; production single-instance delivery and the interactive installer close request remain separate checks.','Partial extraction is constructed through the bundled coordinator; no native wizard Cancel is clicked during extraction.','File-lock refusal is a real Windows filesystem fault; physical disk-full, power loss and a clean OS profile remain unverified.']},null,2));
   console.log('Native installer interruption acceptance passed.');
 }catch(error){await writeFile(path.join(work,'result.json'),JSON.stringify({passed:false,error:String(error),checks,target},null,2));throw error;}
 finally{if(lockProcess&&lockProcess.exitCode===null&&lockProcess.signalCode===null){lockProcess.stdin.end('\n');await new Promise(resolve=>{const timer=setTimeout(()=>{lockProcess.kill();resolve();},10000);lockProcess.once('exit',()=>{clearTimeout(timer);resolve();});});}await app?.close().catch(()=>{});}
