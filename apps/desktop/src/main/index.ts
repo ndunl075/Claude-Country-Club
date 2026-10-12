@@ -20,13 +20,15 @@ import { bindSystemLifecycle } from './systemLifecycle';
 import { fitWindowBounds } from './windowBounds';
 import { diagnosticReport, DiagnosticReviews } from './diagnosticExport';
 import { DiagnosticLog, DIAGNOSTIC_CHUNK_BYTES } from './diagnosticLog';
+import { runWindowWorker } from './windowWorkerMain';
 
 app.setName('Claude Country Club');
 const testing = process.env.CCC_TEST_MODE === '1';
+const windowWorkerMode = process.argv.includes('--ccc-window-worker');
 if(testing && process.env.CCC_TEST_SOFTWARE==='1')app.disableHardwareAcceleration();
 if (testing && process.env.CCC_DATA_DIR) app.setPath('userData', path.resolve(process.env.CCC_DATA_DIR));
 protocol.registerSchemesAsPrivileged([{ scheme: 'ccc', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
-if (!testing && !app.requestSingleInstanceLock()) app.quit();
+if (!testing && !windowWorkerMode && !app.requestSingleInstanceLock()) app.quit();
 let window: BrowserWindow | undefined, tray: Tray | undefined, store: Store, integrations: IntegrationManager;
 let broker: ChildProcessWithoutNullStreams | undefined, brokerReady = false, quitting = false;
 let quitPending = false;
@@ -320,7 +322,8 @@ async function createWindow() {
       throw error;
     }
 }
-app.whenReady().then(async()=> {
+if (windowWorkerMode) runWindowWorker();
+else app.whenReady().then(async()=> {
   const background=process.argv.includes('--ccc-background') || (!testing && process.platform==='darwin' && app.getLoginItemSettings().wasOpenedAtLogin);
   try {
     screen.on('display-removed',repairBounds);
@@ -361,6 +364,7 @@ app.whenReady().then(async()=> {
     const interval=setInterval(()=>{if(registry.expire())reconcile();},60_000);interval.unref();
   } catch(error) { if(!background && systemHolds.size===0)dialog.showErrorBox('Country Club could not start',error instanceof Error?error.message:'Your saved data was preserved. Please repair the application.');quitting=true;app.quit(); }
 });
+if (!windowWorkerMode) {
 app.on('second-instance',(_event,args)=>{if(args.includes('--ccc-installer-quit'))app.quit();else void requestOpen('dashboard');});
 app.on('activate',()=>void requestOpen('dashboard'));
 app.on('window-all-closed',()=>{});
@@ -376,3 +380,4 @@ app.on('before-quit',event=>{
   }
   quitting=true;broker?.stdin.end();broker?.kill();try{store?.close();}catch{};tray?.destroy();
 });
+}

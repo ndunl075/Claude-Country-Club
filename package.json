@@ -56,6 +56,7 @@
     "measure:owned-processes": "node scripts/measure-owned-processes.mjs",
     "measure:split-processes": "node scripts/measure-split-processes.mjs",
     "probe:inherited-ipc": "node scripts/probe-inherited-ipc.mjs",
+    "test:window-worker-process": "npm run build && node scripts/test-window-worker-process.mjs",
     "package:dir": "npm run build && electron-builder --dir",
     "package:win": "npm run build && electron-builder --win nsis --x64",
     "package:mac": "npm run build && electron-builder --mac pkg --publish never",
