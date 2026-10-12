@@ -35,6 +35,7 @@
     "test:startup-ordering": "node scripts/test-startup-ordering-suite.mjs",
     "test:system-lifecycle": "node scripts/test-system-lifecycle.mjs",
     "test:claude-lifecycle": "node scripts/test-claude-lifecycle.mjs",
+    "test:attention-delivery": "node scripts/test-attention-delivery.mjs",
     "test:display-bounds": "node scripts/test-display-bounds.mjs",
     "test:history-retention": "node scripts/test-history-retention.mjs",
     "test:private-identity": "node scripts/test-private-identity.mjs",
