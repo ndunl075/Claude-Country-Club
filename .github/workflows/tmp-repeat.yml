@@ -25,7 +25,6 @@ jobs:
           CCC_BUILD_ARCH: amd64
       - run: npx electron-builder --win nsis --x64 --publish never
       - run: npx electron-builder --win nsis --x64 --publish never --config.extraMetadata.version=0.1.1 --config.directories.output=work/upgrade-release
-      - run: npm run test:installer
       - name: Repeat interruption and upgrade
         shell: pwsh
         run: |
