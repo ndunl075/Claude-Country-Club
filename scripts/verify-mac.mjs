@@ -54,7 +54,16 @@ await writeFile(providerFile, JSON.stringify({ hooks: { Stop: [{ hooks: [{ ...gr
 const blocked = spawnSync('/bin/bash', [uninstall, '--cleanup-only', '--yes'], { encoding: 'utf8', env: { ...process.env, HOME: home } }); assert.equal(blocked.status, 2, 'Modified helper references must block uninstall'); assert(existsSync(helper), 'Blocked uninstall must preserve helper'); assert(JSON.parse(await readFile(path.join(data, 'config-patches.json'), 'utf8')).codex, 'Blocked uninstall must preserve ownership');
 if (args.includes('--installed')) { const receipt = run('/usr/sbin/pkgutil', ['--pkg-info-plist', 'com.countryclub.desktop']); assert(receipt.includes('com.countryclub.desktop'), 'Installed receipt missing'); const installedApp = option('--app') ?? '/Applications/Claude Country Club.app'; assert(existsSync(path.join(installedApp, 'Contents/Resources/ccc-hook')), 'Installed helper missing'); }
 if (args.includes('--smoke')) {
-  run(process.execPath, ['scripts/e2e.mjs'], { env: { ...process.env, CCC_EXECUTABLE: executable }, stdio: 'inherit' });
+  const smoke = spawnSync(process.execPath, ['scripts/e2e.mjs'], { env: { ...process.env, CCC_EXECUTABLE: executable }, stdio: 'inherit' });
+  if (smoke.status !== 0) {
+    // Playwright reports only a launch timeout; show why the packaged app would not start.
+    const probe = spawnSync(executable, ['--ccc-background'], { encoding: 'utf8', timeout: 15000, env: { ...process.env, CCC_TEST_MODE: '1', CCC_DATA_DIR: path.join(home, 'probe-data'), CCC_TEST_HOME: home } });
+    console.error(`Packaged app probe: status=${probe.status} signal=${probe.signal} error=${probe.error?.message ?? ''}
+${probe.stdout}
+${probe.stderr}`);
+    console.error(spawnSync('/usr/bin/codesign', ['-dvv', app], { encoding: 'utf8' }).stderr);
+    throw new Error('Packaged app smoke test failed');
+  }
 }
 const result = { passed: true, architecture: arch, signedReleaseVerified: signed, previewOnly: !signed, installedReceiptChecked: args.includes('--installed'), smokeTested: args.includes('--smoke'), installer: path.basename(pkg), sha256: createHash('sha256').update(await readFile(pkg)).digest('hex'), gates: ['real desktop focus/Spaces/sleep-wake tests', 'live enrolled client lifecycle traces', 'normal Installer dialogs and Finder removal'] };
 await writeFile(path.join(work, `result-${arch}.json`), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result, null, 2));
