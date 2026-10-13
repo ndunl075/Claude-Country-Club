@@ -1,0 +1,49 @@
+# TEMPORARY: repeat the two flaky Windows acceptance steps. Remove before review.
+name: Temporary Windows repeat
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/win-ci-green*', 'win-ci-green*']
+permissions:
+  contents: read
+jobs:
+  repeat:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: native/ccc-hook/go.mod
+          cache-dependency-path: native/ccc-hook/go.sum
+      - run: npm ci
+      - run: npm run build
+        env:
+          CCC_BUILD_ARCH: amd64
+      - run: npx electron-builder --win nsis --x64 --publish never
+      - run: npx electron-builder --win nsis --x64 --publish never --config.extraMetadata.version=0.1.1 --config.directories.output=work/upgrade-release
+      - run: npm run test:installer
+      - name: Repeat interruption and upgrade
+        shell: pwsh
+        run: |
+          $failed = 0
+          foreach ($i in 1..6) {
+            foreach ($step in 'test:installer-interruption', 'test:upgrade') {
+              npm run $step
+              if ($LASTEXITCODE -ne 0) { $failed++; Write-Host "::error::iteration $i $step failed" }
+              else { Write-Host "iteration $i $step passed" }
+              Write-Host "--- coordinator log"; Get-Content "$env:TEMP\ccc-installer.log" -ErrorAction SilentlyContinue | Select-Object -Last 40
+            }
+          }
+          if ($failed -gt 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: repeat-evidence
+          path: |
+            work/installer-interruption/result.json
+            work/upgrade-test/result.json
+          if-no-files-found: ignore

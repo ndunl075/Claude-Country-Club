@@ -1,7 +1,7 @@
 // Local real-version upgrade and recovery acceptance. Never enroll live clients.
 import { _electron as electron, expect } from 'playwright/test';
 import { spawn, execFileSync } from 'node:child_process';
-import { cp, mkdir, readFile, writeFile, access, mkdtemp } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, access, mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -14,6 +14,10 @@ const coordinator = path.join(root, 'dist/native/ccc-installer.exe');
 const base = path.join(root, 'release/Claude-Country-Club-Setup-0.1.0-x64.exe');
 const upgrade = path.join(root, 'work/upgrade-release/Claude-Country-Club-Setup-0.1.1-x64.exe');
 const exists = p => access(p).then(() => true, () => false);
+const diagnosticFiles = ['ccc-installer-failure.txt', 'ccc-installer.log'].map(name => path.join(process.env.TEMP ?? '', name));
+// Silent installers report nothing; the NSIS stage and the coordinator log are the only evidence of an exit 5.
+const installerDiagnostics = async () => (await Promise.all(diagnosticFiles.map(async file => `--- ${file}\n${await readFile(file, 'utf8').catch(() => '(missing)')}`))).join('\n');
+await Promise.all(diagnosticFiles.map(file => rm(file, { force: true })));
 const registration = () => {
   const json = execFileSync('powershell.exe', ['-NoProfile', '-Command', "if (Test-Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\e0e2b6b5-dc94-506c-b07b-3fd5ab2393ac') { Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\e0e2b6b5-dc94-506c-b07b-3fd5ab2393ac' | Select-Object UninstallString,DisplayVersion | ConvertTo-Json -Compress }; exit 0"], { encoding: 'utf8', windowsHide: true }).trim();
   if (!json) return null;
@@ -29,7 +33,7 @@ async function run(file, args, expected = 0, verbatim = false) {
     const child = spawn(file, args, { windowsHide: true, windowsVerbatimArguments: verbatim, stdio: 'inherit' });
     const timer = setTimeout(() => { child.kill(); reject(Error('Upgrade test timed out')); }, 180_000);
     child.once('error', e => { clearTimeout(timer); reject(e); });
-    child.once('exit', code => { clearTimeout(timer); code === expected ? resolve() : reject(Error(`${path.basename(file)} exited ${code}; expected ${expected}`)); });
+    child.once('exit', code => { clearTimeout(timer); if (code === expected) return resolve(); installerDiagnostics().then(details => { console.error(details); reject(Error(`${path.basename(file)} exited ${code}; expected ${expected}\n${details}`)); }); });
   });
 }
 const hash = async file => createHash('sha256').update(await readFile(file)).digest('hex');

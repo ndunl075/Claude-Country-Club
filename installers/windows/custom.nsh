@@ -120,6 +120,12 @@
     ${If} $cccResult != "0"
       DetailPrint "Installation failed during $cccStage; result: $cccResult"
       DetailPrint "Coordinator details (bounded): $cccDetails"
+      ClearErrors
+      FileOpen $R9 "$TEMP\ccc-installer-failure.txt" w
+      ${IfNot} ${Errors}
+        FileWrite $R9 "stage=$cccStage$\r$\nresult=$cccResult$\r$\ndetails=$cccDetails$\r$\n"
+        FileClose $R9
+      ${EndIf}
       IfSilent recovery_abort
       MessageBox MB_OK|MB_ICONEXCLAMATION "Automatic recovery could not finish. Saved rounds and provider settings were not changed.$\r$\n$\r$\nStage: $cccStage$\r$\nResult: $cccResult$\r$\n$\r$\nKeep $cccTarget and $cccTarget.ccc-transaction unchanged for manual review.$\r$\n$\r$\nCoordinator details (may be truncated or unreadable):$\r$\n$cccDetails"
       recovery_abort:
