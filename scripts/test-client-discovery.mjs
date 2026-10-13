@@ -21,6 +21,7 @@ import("encoding/json";"fmt";"os")
 func main(){cwd,_:=os.Getwd();record:=map[string]interface{}{"args":os.Args[1:],"cwd":cwd,"home":os.Getenv("HOME"),"userprofile":os.Getenv("USERPROFILE"),"codexHome":os.Getenv("CODEX_HOME"),"claudeHome":os.Getenv("CLAUDE_CONFIG_DIR"),"openaiKey":os.Getenv("OPENAI_API_KEY"),"anthropicKey":os.Getenv("ANTHROPIC_API_KEY")};b,_:=json.Marshal(record);os.WriteFile("invocation.json",b,0600);fmt.Println("codex-cli 0.0.7\\nPRIVATE-FIXTURE-OUTPUT")}
 `);
 execFileSync('go',['build','-trimpath','-ldflags=-s -w -H=windowsgui','-o',binary,source],{windowsHide:true,timeout:60000,env:{...process.env,GOOS:'windows',GOARCH:process.arch==='arm64'?'arm64':'amd64',CGO_ENABLED:'0'}});
+const closeApp=async a=>{const proc=a.process();let timer;await Promise.race([a.close(),new Promise(r=>{timer=setTimeout(()=>{console.warn('app.close() exceeded 20s; killing process tree');try{execFileSync('taskkill',['/PID',String(proc.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'})}catch{}r()},20000)})]);clearTimeout(timer)};
 const exists=p=>access(p).then(()=>true,()=>false),checks=[];let app;
 try{
  for(const layout of ['nested','hoisted','legacy','nested-long']){
@@ -41,8 +42,8 @@ try{
   await phase(layout,'verify-client');
   const client=state.integrations.find(i=>i.provider==='codex').client;assert.equal(client.status,'found');assert.equal(client.executable,executable);assert.equal(client.version,'0.0.7');assert(!JSON.stringify(client).includes('PRIVATE-FIXTURE-OUTPUT'));
   const record=JSON.parse(await readFile(path.join(data,'client-probe','invocation.json'),'utf8'));assert.deepEqual(record.args,['--version']);assert.equal(record.cwd,path.join(data,'client-probe'));assert.equal(record.home,record.cwd);assert.equal(record.userprofile,record.cwd);assert.equal(record.codexHome,path.join(record.cwd,'codex'));assert.equal(record.claudeHome,path.join(record.cwd,'claude'));assert.equal(record.openaiKey,'');assert.equal(record.anthropicKey,'');assert.equal(await readFile(config,'utf8'),configBytes);
-  await phase(layout,'close');await app.close();app=undefined;await phase(layout,'complete');checks.push(`${layout}: explicit packaged IPC discovers native fixture, probes only --version with private home/no keys, retains version only and preserves provider bytes`);
+  await phase(layout,'close');await closeApp(app);app=undefined;await phase(layout,'complete');checks.push(`${layout}: explicit packaged IPC discovers native fixture, probes only --version with private home/no keys, retains version only and preserves provider bytes`);
  }
  await writeFile(path.join(artifacts,'result.json'),JSON.stringify({passed:true,executableSha256:createHash('sha256').update(await readFile(process.env.CCC_EXECUTABLE)).digest('hex'),checks,limitations:['Uses a native fixture executable; does not certify installed provider versions, hook schema, trust, signed-in delivery or subscription status.','Windows fixed npm layouts only; other package managers retain manual native executable selection.']},null,2));console.log('Packaged native client discovery acceptance passed.');
 }catch(error){await writeFile(path.join(artifacts,'result.json'),JSON.stringify({passed:false,error:String(error),checks},null,2));throw error;}
-finally{await app?.close().catch(()=>{});}
+finally{if(app)await closeApp(app).catch(()=>{});}
