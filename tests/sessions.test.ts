@@ -28,3 +28,9 @@ describe('root session lifecycle', () => {
   it('keeps independent sessions separate and clears connection loss', () => { const r=new SessionRegistry(); r.accept(event('start')); r.accept(event('start',{sessionKey:'other'})); r.accept(event('stop')); expect(r.get('codex:other')?.state).toBe('working'); r.disconnect(); expect(r.get('codex:other')?.state).toBe('unknown'); });
   it('rejects invalid input and drops unapproved fields', () => { expect(()=>validateEvent({...event('start'),sessionKey:'../bad'})).toThrow(); expect(validateEvent({...event('start'),prompt:'SECRET'})).not.toHaveProperty('prompt'); });
 });
+
+describe('automatic session selection', () => {
+  it('follows a new session after the selected one ends', () => { const r=new SessionRegistry(); r.accept(event('start',{sessionKey:'first',turnId:'a'})); let selected=r.autoSelect(null); expect(selected).toBe('codex:first'); r.accept(event('session-ended',{sessionKey:'first',turnId:'a'})); r.accept(event('start',{sessionKey:'second',turnId:'b'})); selected=r.autoSelect(selected); expect(selected).toBe('codex:second'); });
+  it('follows the working session when a remembered choice is unknown after restart', () => { const r=new SessionRegistry(); r.accept(event('start',{sessionKey:'fresh',turnId:'c'})); expect(r.autoSelect('codex:yesterday')).toBe('codex:fresh'); });
+  it('keeps a live selection between turns and stays put when several sessions work', () => { const r=new SessionRegistry(); r.accept(event('start',{sessionKey:'mine',turnId:'d'})); r.accept(event('stop',{sessionKey:'mine',turnId:'d'})); r.accept(event('start',{sessionKey:'other',turnId:'e'})); expect(r.autoSelect('codex:mine')).toBe('codex:mine'); r.accept(event('start',{sessionKey:'third',turnId:'f'})); expect(r.autoSelect(null)).toBe(null); });
+});

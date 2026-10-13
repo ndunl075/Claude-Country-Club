@@ -178,8 +178,7 @@ function accept(raw: unknown) {
     if (!registry.accept(event)) return;
     // Retain deduplication/turn tombstones, but never trust held events as work.
     if(systemHolds.size){registry.disconnect();publish();return;}
-    const active=registry.list().filter(s=>s.state==='working');
-    if (!selected && active.length===1) selected=active[0].key;
+    selected=registry.autoSelect(selected);
     reconcile();
   } catch { diagnose('EVENT_REJECTED','An invalid local lifecycle event was ignored.'); }
 }
