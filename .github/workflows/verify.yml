@@ -41,6 +41,12 @@ jobs:
         run: npm run test:installer
       - if: matrix.target == 'win'
         run: npm run test:installer-interruption
+      - name: Correlate attention hook delivery and state
+        if: matrix.target == 'win'
+        shell: pwsh
+        run: |
+          $env:CCC_EXECUTABLE = Join-Path (Get-Location) 'release/win-unpacked/Claude Country Club.exe'
+          npm run test:attention-delivery
       - name: Complete nine holes through packaged controls
         shell: pwsh
         run: |
@@ -84,6 +90,8 @@ jobs:
             work/input-provenance/result.json
             work/input-conflicts/*.json
             work/focus-interruption/*.json
+            work/midflight-crash/*.json
+            work/installer-handoff/result.json
             work/input-provenance/failure.png
             work/progress-files/result.json
             work/progress-files/failure.png
@@ -103,6 +111,7 @@ jobs:
             work/startup-ordering/*.png
             work/system-lifecycle/result.json
             work/claude-lifecycle/*.json
+            work/attention-delivery/*.json
             work/claude-lifecycle/*.png
             work/display-bounds/result.json
             work/history-retention/result.json

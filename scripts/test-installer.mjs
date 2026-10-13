@@ -14,6 +14,7 @@ const { version } = JSON.parse(await readFile(path.join(root,'package.json'),'ut
 const installerName = `Claude-Country-Club-Setup-${version}-x64.exe`;
 assert((await readdir(release)).includes(installerName), 'Build the current Windows installer first.');
 const installer = path.join(release, installerName);
+const installerSha256 = createHash('sha256').update(await readFile(installer)).digest('hex');
 const executable = path.join(destination, 'Claude Country Club.exe');
 const exists = async p => access(p).then(() => true, () => false);
 // Never overwrite another installed copy or touch its registered integrations.
@@ -33,7 +34,11 @@ assert(!(await exists(liveLedger)), 'Live integration ledger exists. Use a dispo
 await mkdir(artifacts, { recursive: true });
 async function run(command, args, env = process.env, verbatim = false, expectedCode = 0) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: root, env, windowsHide: true, windowsVerbatimArguments: verbatim, stdio: 'inherit' });
+    // These established Playwright fixtures attach to the controller's
+    // BrowserWindow. The shipped worker path has dedicated packaged coverage;
+    // retain this compatibility matrix until each fixture drives the worker.
+    const childEnv=command===process.execPath?{...env,CCC_WINDOW_WORKER:'0'}:env;
+    const child = spawn(command, args, { cwd: root, env:childEnv, windowsHide: true, windowsVerbatimArguments: verbatim, stdio: 'inherit' });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Installer test exceeded 180 seconds.')); }, 180_000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
     child.once('exit', code => { clearTimeout(timer); code === expectedCode ? resolve() : reject(new Error(`${path.basename(command)} exited ${code}; expected ${expectedCode}`)); });
@@ -75,6 +80,8 @@ try {
   checks.push('installed application zoom, keyboard, settings and modal acceptance');
   await run(process.execPath, ['scripts/test-save-faults.mjs'], { ...process.env, CCC_EXECUTABLE: executable });
   checks.push('installed application lock and automatic-rollback recovery');
+  await run(process.execPath, ['scripts/test-midflight-crash.mjs'], { ...process.env, CCC_EXECUTABLE: executable });
+  checks.push('installed acknowledged mid-flight shot survives renderer crash and owned process-tree termination exactly');
     await run(process.execPath, ['scripts/test-progress-files.mjs'], { ...process.env, CCC_EXECUTABLE: executable });
     await run(process.execPath, ['scripts/test-diagnostics-export.mjs'], { ...process.env, CCC_EXECUTABLE: executable });
     checks.push('installed application previewed private diagnostic export acceptance');
@@ -117,9 +124,9 @@ try {
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   checks.push('uninstall removes application files');
-  await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ passed: true, installer, destination, checks }, null, 2));
+  await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ passed: true, installer, installerSha256, destination, checks }, null, 2));
   console.log('Windows installer acceptance passed: install, installed E2E, repair, repaired E2E, uninstall.');
 } catch (error) {
-  await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ passed: false, installer, destination, checks, error: String(error) }, null, 2));
+  await writeFile(path.join(artifacts, 'result.json'), JSON.stringify({ passed: false, installer, installerSha256, destination, checks, error: String(error) }, null, 2));
   throw error;
 }

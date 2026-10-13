@@ -23,12 +23,29 @@ async function launch(extraArgs=[]){
     return null;
   }
   const page=await application.firstWindow();page.on('pageerror',error=>failures.push(error.message));
+  await application.evaluate(({app,BrowserWindow})=>{
+    const trace=globalThis.__cccE2ELifecycle=[];
+    const record=value=>{trace.push({time:Date.now(),...value});if(trace.length>128)trace.shift();};
+    const observe=w=>{
+      const id=w.id;
+      for(const event of ['show','hide','closed'])w.on(event,()=>record({source:'window',event,id}));
+      w.webContents.on('render-process-gone',(_event,details)=>record({source:'renderer',reason:details.reason,exitCode:details.exitCode}));
+    };
+    for(const w of BrowserWindow.getAllWindows())observe(w);
+    app.on('browser-window-created',(_event,w)=>observe(w));
+    app.on('child-process-gone',(_event,details)=>record({source:'child',type:details.type,reason:details.reason,exitCode:details.exitCode}));
+    const broker=process._getActiveHandles().find(h=>h.constructor?.name==='ChildProcess'&&/ccc-hook(?:\.exe)?$/.test(h.spawnfile??''));
+    if(broker?.stdout){let buffer='';broker.stdout.prependListener('data',chunk=>{
+      buffer+=chunk.toString();let end;
+      while((end=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,end);buffer=buffer.slice(end+1);try{const message=JSON.parse(line);if(message.event)record({source:'broker',provider:message.event.provider,kind:message.event.kind,turn:message.event.turnId});}catch{}}
+    });}
+  });
   await page.waitForLoadState('domcontentloaded');
   await expect(page.getByRole('region',{name:'Mini golf game',exact:true})).toBeVisible({timeout:15_000});
   await observePointerInput(page);await observeRoundWrites(application);
   return page;
 }
-async function visible(){return application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(window=>window.isVisible()));}
+async function visible(){return application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(window=>window.webContents.getURL().startsWith('ccc://')&&window.isVisible()));}
 async function until(fn,message){const deadline=Date.now()+10_000;while(Date.now()<deadline){if(await fn())return;await new Promise(r=>setTimeout(r,80));}throw new Error(message);}
 try {
   let page=await launch();
@@ -59,6 +76,13 @@ try {
     child.stdin.end(JSON.stringify({session_id:sessionId,turn_id:turnId,cwd:home,tool_name:toolName,prompt:'privacy-fixture-do-not-retain',tool_input:{command:'secret-fixture',questions:['private-question'],plan:'private-plan'}}));
     await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(new Error(`Hook exit ${code}`)));});assert.equal(output,'');
   }
+  // Give foreground ownership a deterministic destination before testing an
+  // inactive show. A sole hidden window can otherwise be reactivated by the OS.
+  const focusDestination=await application.evaluate(async({BrowserWindow})=>{
+    const destination=new BrowserWindow({show:false,width:200,height:100,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+    await destination.loadURL('about:blank');destination.show();destination.focus();return destination.id;
+  });
+  await expect.poll(()=>application.evaluate(({BrowserWindow},id)=>BrowserWindow.fromId(id)?.isFocused(),focusDestination)).toBe(true);
   await hook('start');
   await until(visible,'Automatic wait did not show the game');
   await expect(page.locator('body')).toHaveClass(/companion/);
@@ -68,8 +92,10 @@ try {
   await expect(page.getByRole('application')).toHaveAttribute('aria-disabled','false',{timeout:15_000});
   
   await page.screenshot({path:path.join(artifacts,'companion.png'),fullPage:true});
-  const focus=await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFocused());
+  const focus=await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().startsWith('ccc://')).isFocused());
   assert.equal(focus,false,'Automatic show stole focus');
+  assert.equal(await application.evaluate(({BrowserWindow},id)=>BrowserWindow.fromId(id)?.isFocused(),focusDestination),true,'Automatic show displaced the owned foreground window');
+  await application.evaluate(({BrowserWindow},id)=>BrowserWindow.fromId(id)?.destroy(),focusDestination);
   const beforeAttention=(await page.evaluate(()=>window.countryClub.loadRound())).state;
   await pullAim(page,{angle:90,power:30});
   await hook('attention');await until(async()=>!(await visible()),'Attention did not tuck the game away');
@@ -154,6 +180,8 @@ try {
   console.log('Desktop E2E passed: gameplay, recovery, native lifecycle, focus, privacy, isolated integration removal.');
 } catch(error) {
   // Keep isolated runtime evidence for intermittent input/lifecycle failures.
+  const lifecycle=await application?.evaluate(({BrowserWindow})=>({events:globalThis.__cccE2ELifecycle,windows:BrowserWindow.getAllWindows().map(w=>({id:w.id,visible:w.isVisible(),destroyed:w.isDestroyed()}))})).catch(e=>({unavailable:String(e)}));
+  await writeFile(path.join(artifacts,'failure-lifecycle.json'),JSON.stringify(lifecycle,null,2));
   const page=application?.windows()[0];
   if(page){
     await page.screenshot({path:path.join(artifacts,'failure.png')}).catch(()=>{});

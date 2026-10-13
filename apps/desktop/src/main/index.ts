@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, screen, shell } from 'electron';
 import { Tray } from 'electron';
-import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, ChildProcess, ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -20,14 +20,24 @@ import { bindSystemLifecycle } from './systemLifecycle';
 import { fitWindowBounds } from './windowBounds';
 import { diagnosticReport, DiagnosticReviews } from './diagnosticExport';
 import { DiagnosticLog, DIAGNOSTIC_CHUNK_BYTES } from './diagnosticLog';
+import { runWindowWorker } from './windowWorkerMain';
+import { launchWindowWorker } from './windowWorkerLauncher';
+import { relayWindowWorkerApi } from './windowWorkerApiRelay';
 
 app.setName('Claude Country Club');
 const testing = process.env.CCC_TEST_MODE === '1';
+const windowWorkerMode = process.argv.includes('--ccc-window-worker');
 if(testing && process.env.CCC_TEST_SOFTWARE==='1')app.disableHardwareAcceleration();
 if (testing && process.env.CCC_DATA_DIR) app.setPath('userData', path.resolve(process.env.CCC_DATA_DIR));
 protocol.registerSchemesAsPrivileged([{ scheme: 'ccc', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
-if (!testing && !app.requestSingleInstanceLock()) app.quit();
+if (!testing && !windowWorkerMode && !app.requestSingleInstanceLock()) app.quit();
 let window: BrowserWindow | undefined, tray: Tray | undefined, store: Store, integrations: IntegrationManager;
+let windowWorkerBridge: import('./windowWorkerBridge').WindowWorkerBridge | undefined;
+let windowWorkerChild: ChildProcess | undefined;
+// Shipped desktop launches use the controller/worker split. Development and
+// existing source harnesses remain opt-in because Electron's sandbox access
+// to an arbitrary checkout is an environment concern, not a product setting.
+const workerRenderer = process.env.CCC_WINDOW_WORKER === '1' || (app.isPackaged && process.env.CCC_WINDOW_WORKER !== '0');
 let broker: ChildProcessWithoutNullStreams | undefined, brokerReady = false, quitting = false;
 let quitPending = false;
 let uiReady = false, startupOpenSuppressed = false;
@@ -45,6 +55,7 @@ const registry = new SessionRegistry();
 const diagnostics: Diagnostic[] = [];
 const diagnosticReviews=new DiagnosticReviews();
 const frozenWaiters = new Map<string, () => void>();
+const controllerHandlers = new Map<string, (...args: any[]) => unknown>();
 const systemHolds = new Set<'sleep' | 'lock'>();
 let lockStateKnown = false;
 const dataDir = app.getPath('userData');
@@ -86,7 +97,7 @@ function state(): HostState {
   return { settings: store.settings(), sessions: registry.list(), integrations: integrationCache, selectedSession: selected, practice, suspended, brokerReady, diagnostics:[...diagnostics], version:app.getVersion(),platform:process.platform };
 }
 let integrationCache: HostState['integrations'] = [];
-function publish() { if (store && window && !window.isDestroyed() && !rendererCrashed) window.webContents.send('ccc:state',state()); }
+function publish() { const next=state(); if (store && window && !window.isDestroyed() && !rendererCrashed) window.webContents.send('ccc:state',next); if(windowWorkerBridge)void windowWorkerBridge.request('state',next).catch(()=>undefined); }
 async function refreshIntegrations() { integrationCache = (await integrations.list()).map(info=>({...info,client:clientCache[info.provider] ?? {status:'not-checked',note:'Choose Check version to inspect an installed native client. No client is launched automatically.'}})); publish(); }
 function waitKey() { const s = registry.get(selected); return s ? `${s.key}:${s.generation}` : undefined; }
 function eligible() { const s=registry.get(selected); return lockStateKnown && systemHolds.size===0 && (store.settings().automatic || demo) && !practice && s?.state==='working' && s.reliable && dismissedWait!==waitKey(); }
@@ -94,17 +105,32 @@ function systemHold(reason: 'sleep' | 'lock', active: boolean) {
   if(active)systemHolds.add(reason);else systemHolds.delete(reason);
   if(active){queuedOpen=undefined;if(!uiReady)startupOpenSuppressed=true;}
   // Resume/unlock never revives work observed before or during the hold.
-  practice=false;registry.disconnect();void freezeAndHide();
+  practice=false;registry.disconnect();
+  // System listeners are bound before storage so a locked startup cannot
+  // create or show a renderer. It also means an early callback must retain
+  // the hold without publishing state through an as-yet-unopened store.
+  if(store)void freezeAndHide();
 }
 function cancelEligibility() { if (eligibleTimer) clearTimeout(eligibleTimer); eligibleTimer=undefined; }
 function cancelPark() { if(parkTimer)clearTimeout(parkTimer);parkTimer=undefined; }
+async function stopWindowWorker(bridge: NonNullable<typeof windowWorkerBridge>, child: ChildProcess | undefined) {
+  // Renderer persistence is controller-owned, so a failed presentation-child
+  // shutdown may be bounded without risking a game checkpoint or integration.
+  await Promise.race([bridge.request('quit',{}).catch(()=>undefined),new Promise(resolve=>setTimeout(resolve,1_000))]);
+  if(!child||child.exitCode!==null)return;
+  await Promise.race([new Promise(resolve=>child.once('exit',resolve)),new Promise(resolve=>setTimeout(resolve,1_000))]);
+  if(child.exitCode===null)child.kill();
+}
 function schedulePark() {
   cancelPark();
+  const delay=testing&&process.env.CCC_WINDOW_WORKER_RESOURCE_PROBE==='1'?100:30_000;
   parkTimer=setTimeout(()=>{
+    if(testing&&process.env.CCC_WINDOW_WORKER_RESOURCE_PROBE==='1')console.log(`CCC_WINDOW_WORKER_PARK_CHECK ${JSON.stringify({worker:!!windowWorkerBridge,practice,eligible:eligible(),recovering:!!rendererRecovery,freezing:!!freezing})}`);
+    if(workerRenderer && windowWorkerBridge && !practice && !eligible() && !rendererRecovery && !freezing){const bridge=windowWorkerBridge,child=windowWorkerChild;windowWorkerBridge=undefined;windowWorkerChild=undefined;void stopWindowWorker(bridge,child);return;}
     if(window && !window.isDestroyed() && !window.isVisible() && !practice && !eligible() && !rendererRecovery && !freezing){
       rememberBounds();const parked=window;window=undefined;parked.destroy();
     }
-  },30_000);
+  },delay);
   parkTimer.unref();
 }
 async function freezeAndHide() {
@@ -112,6 +138,11 @@ async function freezeAndHide() {
   if (freezing) return freezing;
   const epoch = ++freezeVersion;
   freezing = (async () => {
+    if(workerRenderer&&windowWorkerBridge){
+      const id=randomUUID();
+      await new Promise<void>(resolve=>{const timer=setTimeout(()=>{frozenWaiters.delete(id);resolve();},180);frozenWaiters.set(id,()=>{clearTimeout(timer);resolve();});void windowWorkerBridge?.request('freeze',id).catch(()=>{frozenWaiters.delete(id);resolve();});});
+      if(freezeVersion===epoch){await windowWorkerBridge?.request('hide',{}).catch(()=>undefined);schedulePark();}return;
+    }
     if (window && !window.isDestroyed() && !rendererCrashed) {
       const id=randomUUID();
       await new Promise<void>(resolve => {
@@ -156,6 +187,18 @@ async function recoverRenderer() {
   if(!uiReady || !store)throw new Error('Country Club is still starting.');
   if(quitting || quitPending)return;
   cancelPark();
+  if(workerRenderer){
+    if(windowWorkerBridge)return;
+    const launched=launchWindowWorker(freezeVersion+1,(command,payload)=>{
+      if(command==='api')return relayWindowWorkerApi(payload,controllerHandlers);
+      if(command==='frozen'&&payload&&typeof payload==='object'&&typeof (payload as {id?:unknown}).id==='string'){const id=(payload as {id:string}).id;frozenWaiters.get(id)?.();frozenWaiters.delete(id);return undefined;}
+      return Promise.reject(new Error('Denied worker request'));
+    });
+    windowWorkerChild=launched.child;windowWorkerBridge=launched.bridge;
+    launched.child.on('exit',()=>{if(windowWorkerBridge===launched.bridge){windowWorkerBridge=undefined;windowWorkerChild=undefined;}(globalThis as Record<string,unknown>).__cccWindowWorkerTestRequest=undefined;});
+    try{await launched.bridge.start();if(testing&&process.env.CCC_TEST_CONTROLLER_INSPECT==='1')(globalThis as Record<string,unknown>).__cccWindowWorkerTestRequest=(command:string)=>launched.bridge.request(command,{});}catch(error){if(windowWorkerBridge===launched.bridge){windowWorkerBridge=undefined;windowWorkerChild=undefined;}(globalThis as Record<string,unknown>).__cccWindowWorkerTestRequest=undefined;throw error;}
+    return;
+  }
   if(rendererRecovery){await rendererRecovery;return;}
   if (!rendererCrashed && window && !window.isDestroyed()) return;
   if (!rendererRecovery) {
@@ -171,7 +214,7 @@ async function showDashboard() {
   openedByUser=true; dismissedWait=waitKey(); const epoch=++freezeVersion; suspended=true; practice=false; cancelEligibility();
   await recoverRenderer();
   if(quitting || quitPending || systemHolds.size || freezeVersion!==epoch)return;
-  restoreBounds('dashboard'); window?.show(); publish();
+  if(workerRenderer)await windowWorkerBridge?.request('open',{});else {restoreBounds('dashboard'); window?.show();} publish();
 }
 async function startPractice() {
   if(quitting || quitPending || systemHolds.size)return;
@@ -180,7 +223,7 @@ async function startPractice() {
   openedByUser=true; const epoch=++freezeVersion; cancelEligibility();
   await recoverRenderer();
   if(quitting || quitPending || systemHolds.size || freezeVersion!==epoch)return;
-  practice=true; suspended=false; restoreBounds('dashboard'); window?.show(); publish();
+  practice=true; suspended=false;if(workerRenderer)await windowWorkerBridge?.request('open',{});else {restoreBounds('dashboard'); window?.show();} publish();
 }
 async function requestOpen(mode: 'dashboard' | 'practice') {
   try { await (mode==='practice'?startPractice():showDashboard()); }
@@ -221,24 +264,57 @@ async function startBroker() {
   broker.on('error',()=>diagnose('BROKER_UNAVAILABLE','Automatic connections are unavailable. Practice still works. Repair the application to restore the helper.'));
   broker.on('exit',()=>{if(socketDirectory)void fs.rmdir(socketDirectory).catch(()=>undefined);brokerReady=false;registry.disconnect(); if (!quitting) {reconcile();diagnose('BROKER_STOPPED','Local connection stopped. Restart Country Club to reconnect.');}});
 }
+async function runWindowWorkerControllerProbe() {
+  const { child, bridge } = launchWindowWorker(1,(command,payload)=>{
+    if(command==='api')return relayWindowWorkerApi(payload,controllerHandlers);
+    if(command==='frozen'&&payload&&typeof payload==='object'&&typeof (payload as {id?:unknown}).id==='string'){const id=(payload as {id:string}).id;frozenWaiters.get(id)?.();frozenWaiters.delete(id);return undefined;}
+    if(command==='state')return { relay: 'controller', payload };
+    return Promise.reject(new Error('Unexpected worker request'));
+  });
+  try {
+    await bridge.start();
+    windowWorkerBridge=bridge;
+    await bridge.request('open', {});
+    const relay=await bridge.request('controller-state', {});
+    if(JSON.stringify(relay)!==JSON.stringify({relay:'controller',payload:{requested:'worker'}}))throw new Error('Window worker relay response mismatch.');
+    await bridge.request('hide', {});
+    await bridge.request('quit', {});windowWorkerBridge=undefined;
+    await new Promise<void>((resolve, reject) => {
+      const timer=setTimeout(()=>reject(new Error('Window worker did not exit.')),5_000);
+      child.once('exit',code=>{clearTimeout(timer);code===0?resolve():reject(new Error(`Window worker exited ${code}.`));});
+      child.once('error',error=>{clearTimeout(timer);reject(error);});
+    });
+    console.log('CCC_WINDOW_WORKER_CONTROLLER_PROBE_OK');
+  } catch (error) {
+    console.error('CCC_WINDOW_WORKER_CONTROLLER_PROBE_FAILED',error instanceof Error?error.message:String(error));
+    windowWorkerBridge=undefined;child.kill(); throw error;
+  }
+}
+async function runWindowWorkerSmoke() {
+  await startPractice();
+  await new Promise(resolve=>setTimeout(resolve,500));
+  console.log('CCC_WINDOW_WORKER_SMOKE_OK');
+  app.quit();
+}
 function installIPC() {
   const handle=(name:string,fn:(...args:any[])=>unknown) => ipcMain.handle(`ccc:${name}`,(event,...args)=> {
     if (!window || event.sender!==window.webContents || event.senderFrame!==window.webContents.mainFrame || !event.senderFrame.url.startsWith('ccc://app/')) throw new Error('Untrusted IPC sender');
     if (JSON.stringify(args).length>300_000) throw new Error('IPC payload too large');
     return fn(...args);
   });
-  handle('state',()=>state());
-  handle('settings',(patch:unknown)=>{const settings=store.setSettings(patch); if (patch && typeof patch === 'object' && 'selectedSession' in patch) selected=settings.selectedSession; if (!testing && patch && typeof patch === 'object' && 'startAtLogin' in patch) app.setLoginItemSettings({openAtLogin:settings.startAtLogin,args:['--ccc-background']}); reconcile();return state();});
-  handle('load',()=> { try { return store.load(); } catch { diagnose('SAVE_RECOVERY','The saved round could not be read. Export your data before resetting progress.'); const raw=store.db.prepare('SELECT revision FROM round_save WHERE id=1').get() as {revision:number}|undefined; return raw ? {revision:raw.revision,state:null} : null; } });
-  handle('save',(value:unknown,revision:number)=> { try {return store.save(value,revision);} catch (e) {diagnose('SAVE_FAILED','Progress could not be saved. Play is paused until storage is available.'); suspended=true;publish();throw e;} });
-  handle('practice',startPractice);
-  handle('hide',async()=>{dismissedWait=waitKey();practice=false;await freezeAndHide();});
-  handle('select',(key:string|null)=>{if(key!==null&&!registry.get(key))throw new Error('Unknown session');selected=key;store.setSettings({selectedSession:key});dismissedWait=undefined;practice=false;void freezeAndHide().then(reconcile);});
+  const register=(name:string,fn:(...args:any[])=>unknown)=>{controllerHandlers.set(name,fn);handle(name,fn);};
+  register('state',()=>state());
+  register('settings',(patch:unknown)=>{const settings=store.setSettings(patch); if (patch && typeof patch === 'object' && 'selectedSession' in patch) selected=settings.selectedSession; if (!testing && patch && typeof patch === 'object' && 'startAtLogin' in patch) app.setLoginItemSettings({openAtLogin:settings.startAtLogin,args:['--ccc-background']}); reconcile();return state();});
+  register('load',()=> { try { return store.load(); } catch { diagnose('SAVE_RECOVERY','The saved round could not be read. Export your data before resetting progress.'); const raw=store.db.prepare('SELECT revision FROM round_save WHERE id=1').get() as {revision:number}|undefined; return raw ? {revision:raw.revision,state:null} : null; } });
+  register('save',(value:unknown,revision:number)=> { try {return store.save(value,revision);} catch (e) {diagnose('SAVE_FAILED','Progress could not be saved. Play is paused until storage is available.'); suspended=true;publish();throw e;} });
+  register('practice',startPractice);
+  register('hide',async()=>{dismissedWait=waitKey();practice=false;await freezeAndHide();});
+  register('select',(key:string|null)=>{if(key!==null&&!registry.get(key))throw new Error('Unknown session');selected=key;store.setSettings({selectedSession:key});dismissedWait=undefined;practice=false;void freezeAndHide().then(reconcile);});
   const provider=(p:unknown):Provider=>{if(p!=='claude'&&p!=='codex')throw new Error('Invalid provider');return p;};
-  handle('preview',(p:unknown)=>integrations.preview(provider(p)));
-  handle('apply',async(preview:IntegrationPreview)=>{await integrations.apply(preview);await refreshIntegrations();return state();});
-  handle('remove',async(p:unknown)=>{await integrations.remove(provider(p));await refreshIntegrations();return state();});
-  handle('inspect-client',async(p:unknown,choose:unknown)=>{
+  register('preview',(p:unknown)=>integrations.preview(provider(p)));
+  register('apply',async(preview:IntegrationPreview)=>{await integrations.apply(preview);await refreshIntegrations();return state();});
+  register('remove',async(p:unknown)=>{await integrations.remove(provider(p));await refreshIntegrations();return state();});
+  register('inspect-client',async(p:unknown,choose:unknown)=>{
     const selectedProvider=provider(p);
     if(choose!==undefined && typeof choose!=='boolean')throw new Error('Invalid executable selection');
     let executable:string|undefined;
@@ -246,15 +322,15 @@ function installIPC() {
     clientCache[selectedProvider]=await inspectClient(selectedProvider,{home:testing&&process.env.CCC_TEST_HOME?process.env.CCC_TEST_HOME:os.homedir(),directory:dataDir,...(executable?{executable}:{}),...(testing?{env:{PATH:''}}:{})});
     await refreshIntegrations();return state();
   });
-  handle('simulate',(kind:unknown)=>{
+  register('simulate',(kind:unknown)=>{
     if (!['start','attention','stop'].includes(String(kind))) throw new Error('Invalid demo event');
     demo=kind!=='stop'; practice=false; selected='codex:local-demo';dismissedWait=undefined;
     if(kind==='start')demoTurn=randomUUID();
     accept({protocolVersion:1,eventId:randomUUID(),sessionKey:'local-demo',turnId:demoTurn,provider:'codex',adapterVersion:'synthetic',kind: kind as AgentEvent["kind"]} satisfies AgentEvent);
   });
-  handle('export',async()=> {const result=await dialog.showSaveDialog(window!,{defaultPath:'Country-Club-Progress.json',filters:[{name:'Progress JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return false;await writeProgressExport(result.filePath,JSON.stringify(store.export(),null,2));return true;});
-  handle('diagnostics-preview',()=>diagnosticReviews.create(diagnosticReport(state(),process.arch)));
-  handle('diagnostics-export',async(id:unknown)=>{
+  register('export',async()=> {const result=await dialog.showSaveDialog(window!,{defaultPath:'Country-Club-Progress.json',filters:[{name:'Progress JSON',extensions:['json']}]});if(result.canceled||!result.filePath)return false;await writeProgressExport(result.filePath,JSON.stringify(store.export(),null,2));return true;});
+  register('diagnostics-preview',()=>diagnosticReviews.create(diagnosticReport(state(),process.arch)));
+  register('diagnostics-export',async(id:unknown)=>{
     diagnosticReviews.read(id);
     const result=await dialog.showSaveDialog(window!,{defaultPath:'Country-Club-Diagnostics.json',filters:[{name:'Diagnostic JSON',extensions:['json']}]});
     if(result.canceled||!result.filePath)return false;
@@ -263,7 +339,7 @@ function installIPC() {
     const content=diagnosticReviews.read(id);
     await writeProgressExport(result.filePath,content);diagnosticReviews.complete(id as string);return true;
   });
-  handle('import',async()=> {
+  register('import',async()=> {
     const result=await dialog.showOpenDialog(window!,{properties:['openFile'],filters:[{name:'Progress JSON',extensions:['json']}]});if(result.canceled)return false;
     const info=await fs.stat(result.filePaths[0]);if(!info.isFile()||info.size>300_000)throw new Error('Progress file too large or not a regular file');
     const content=await fs.readFile(result.filePaths[0]);if(content.byteLength>300_000)throw new Error('Progress file too large');
@@ -273,8 +349,8 @@ function installIPC() {
     await freezeAndHide();
     try {store.import(data);await showDashboard();window?.webContents.reload();return true;}catch(error){await showDashboard();throw error;}
   });
-  handle('docs',()=>shell.openExternal('https://github.com/ndunl075/Claude-Country-Club'));
-  handle('updates',()=>shell.openExternal('https://github.com/ndunl075/Claude-Country-Club/releases'));
+  register('docs',()=>shell.openExternal('https://github.com/ndunl075/Claude-Country-Club'));
+  register('updates',()=>shell.openExternal('https://github.com/ndunl075/Claude-Country-Club/releases'));
   ipcMain.on('ccc:frozen',(event,id)=>{if(event.sender===window?.webContents && typeof id==='string'){frozenWaiters.get(id)?.();frozenWaiters.delete(id);}});
 }
 function ensureCourseProtocol() {
@@ -320,7 +396,8 @@ async function createWindow() {
       throw error;
     }
 }
-app.whenReady().then(async()=> {
+if (windowWorkerMode) runWindowWorker();
+else app.whenReady().then(async()=> {
   const background=process.argv.includes('--ccc-background') || (!testing && process.platform==='darwin' && app.getLoginItemSettings().wasOpenedAtLogin);
   try {
     screen.on('display-removed',repairBounds);
@@ -348,6 +425,9 @@ app.whenReady().then(async()=> {
     // IPC and startup state are ready; createWindow installs the course protocol
     // before creating a renderer. Consume the latest queued request once.
     uiReady=true;
+    if(testing&&process.env.CCC_TEST_CONTROLLER_INSPECT==='1'){
+      (globalThis as Record<string,unknown>).__cccControllerQuit=()=>app.quit();
+    }
     const initialOpen=queuedOpen ?? (!background && !startupOpenSuppressed?'dashboard':undefined);
     queuedOpen=undefined;openedByUser=false;
     if(initialOpen)await requestOpen(initialOpen);
@@ -358,21 +438,37 @@ app.whenReady().then(async()=> {
     tray.setContextMenu(Menu.buildFromTemplate([{label:'Open Country Club',click:()=>void requestOpen('dashboard')},{label:'Practice a round',click:()=>void requestOpen('practice')},{label:'Pause automatic play',click:()=>{store.setSettings({automatic:false});reconcile();}},{type:'separator'},{label:'Quit',click:()=>app.quit()}]));
     tray.on('click',()=>void requestOpen('dashboard'));
     try {await startBroker();} catch {diagnose('BROKER_UNAVAILABLE','Automatic connections are unavailable. Practice still works. Repair the application to restore the helper.');}
+    if (testing && workerRenderer && process.env.CCC_WINDOW_WORKER_RESOURCE_PROBE==='1') {
+      await startPractice();
+      console.log('CCC_WINDOW_WORKER_RESOURCE_ACTIVE');
+      while ((globalThis as Record<string, unknown>).__cccWindowWorkerMeasure !== 'park') await new Promise(resolve=>setTimeout(resolve,25));
+      practice=false;
+      await freezeAndHide();
+      console.log('CCC_WINDOW_WORKER_RESOURCE_HIDDEN');
+      return;
+    }
+    if (testing && workerRenderer && process.env.CCC_WINDOW_WORKER_SMOKE==='1') { await runWindowWorkerSmoke(); return; }
+    if (testing && process.env.CCC_WINDOW_WORKER_CONTROLLER_PROBE==='1') { await runWindowWorkerControllerProbe(); app.quit(); return; }
     const interval=setInterval(()=>{if(registry.expire())reconcile();},60_000);interval.unref();
   } catch(error) { if(!background && systemHolds.size===0)dialog.showErrorBox('Country Club could not start',error instanceof Error?error.message:'Your saved data was preserved. Please repair the application.');quitting=true;app.quit(); }
 });
+if (!windowWorkerMode) {
 app.on('second-instance',(_event,args)=>{if(args.includes('--ccc-installer-quit'))app.quit();else void requestOpen('dashboard');});
 app.on('activate',()=>void requestOpen('dashboard'));
 app.on('window-all-closed',()=>{});
 app.on('before-quit',event=>{
   if(!quitting && store){
     event.preventDefault();if(quitPending)return;quitPending=true;practice=false;
-    const save=window && !window.isDestroyed()?freezeAndHide():Promise.resolve();
+    const save=(workerRenderer&&windowWorkerBridge)||(window&&!window.isDestroyed())?freezeAndHide():Promise.resolve();
     void save.finally(async()=>{
       // Diagnostic I/O cannot hold quitting indefinitely or delay gameplay saves.
       await Promise.race([diagnosticLog.flush(),new Promise(resolve=>setTimeout(resolve,500))]);
+      const bridge=windowWorkerBridge,child=windowWorkerChild;
+      windowWorkerBridge=undefined;windowWorkerChild=undefined;
+      if(bridge)await stopWindowWorker(bridge,child);
       quitting=true;app.quit();
     });return;
   }
   quitting=true;broker?.stdin.end();broker?.kill();try{store?.close();}catch{};tray?.destroy();
 });
+}

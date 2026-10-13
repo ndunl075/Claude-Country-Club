@@ -25,7 +25,9 @@ try {
   await new Promise((resolve, reject) => { ws.addEventListener('open', resolve, { once: true }); ws.addEventListener('error', reject, { once: true }); });
   ws.addEventListener('message', event => { const r = JSON.parse(event.data); if (r.id) { const job = pending.get(r.id); pending.delete(r.id); r.error ? job?.reject(Error(r.error.message)) : job?.resolve(r.result); } });
   phase = 'background initialization';
-  await until(() => main(`require('electron').app.isReady() && process._getActiveHandles().some(h=>h.constructor?.name==='ChildProcess'&&/ccc-hook(?:\\.exe)?$/.test(h.spawnfile??'')&&!!h.stdout)`));
+  // The inspector can connect before Electron exposes app. Only that specific
+  // startup condition waits; other evaluation errors and the deadline still fail.
+  await until(() => main(`require('electron').app?.isReady() && process._getActiveHandles().some(h=>h.constructor?.name==='ChildProcess'&&/ccc-hook(?:\\.exe)?$/.test(h.spawnfile??'')&&!!h.stdout)`));
   await pause(1000);
   cold = await main(`(()=>{const {app,BrowserWindow,webContents}=require('electron');return {windows:BrowserWindow.getAllWindows().length,webContents:webContents.getAllWebContents().length,processes:app.getAppMetrics().map(p=>({type:p.type,workingSetKiB:p.memory.workingSetSize}))};})()`);
   assert.equal(cold.windows, 0); assert.equal(cold.webContents, 0);

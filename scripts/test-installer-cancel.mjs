@@ -9,6 +9,7 @@ import { _electron as electron, expect } from 'playwright/test';
 import { dragShot } from './play-input.mjs';
 assert.equal(process.platform,'win32');
 assert(process.argv.includes('--manual'),'Manual-only candidate: run with --manual and observe each native wizard. Not a CI acceptance gate.');
+const repairComplete=process.argv.includes('--repair-complete');
 const work=path.resolve('work/installer-cancel'); await mkdir(work,{recursive:true});
 const profile=await mkdtemp(path.join(work,'profile-'));
 const target=path.join(profile,'Mini golf & café Ω'), executable=path.join(target,'Claude Country Club.exe');
@@ -33,12 +34,14 @@ await writeFile(fixtures[1],'{"hooks":{},"fixture":"keep-byte-exact"}\n');
 await writeFile(fixtures[2],'{"fixture":"keep-byte-exact"}\n');
 const fixtureHashes=await Promise.all(fixtures.map(digest));
 async function verifyPrivate(){assert.deepEqual(await Promise.all(fixtures.map(digest)),fixtureHashes);}
-const checks=[];let app,installed=false;
-async function run(file,args,{cancel=false}={}){
+const checks=[],outcomes=[];let app,installed=false,reference;
+async function run(file,args,{cancel=false,expectedCode=cancel?1:0}={}){
   const child=spawn(file,args,{windowsHide:!cancel,windowsVerbatimArguments:true,stdio:'inherit'});
-  if(cancel){await writeFile(path.join(work,'live.json'),JSON.stringify({phase:installed?'existing-install-cancel':'fresh-install-cancel',pid:child.pid,installer,target,profile},null,2));console.log(`Native wizard ready for cancellation: ${installed?'existing install':'fresh install'} (PID ${child.pid}).`);}
+  if(cancel){await writeFile(path.join(work,'live.json'),JSON.stringify({phase:installed?(repairComplete?'existing-install-repair':'existing-install-cancel'):'fresh-install-cancel',pid:child.pid,installer,target,profile},null,2));console.log(`Native wizard ready: ${installed?(repairComplete?'complete repair':'existing-install cancellation'):'fresh-install cancellation'} (PID ${child.pid}).`);}
   const code=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Native installer observation exceeded five minutes; inspect its live handle before retrying')),300000);child.once('error',error=>{clearTimeout(timer);reject(error);});child.once('exit',code=>{clearTimeout(timer);resolve(code);});});
-  assert.equal(code,cancel?1:0,`Unexpected installer exit: ${code}`);
+  outcomes.push({pid:child.pid,code,cancel,expectedCode,existingInstall:installed,time:new Date().toISOString()});
+  await writeFile(path.join(profile,'native-outcomes.json'),JSON.stringify(outcomes,null,2));
+  assert.equal(code,expectedCode,`Unexpected installer exit: ${code}`);
 }
 try{
   await run(installer,[`/D=${target}`],{cancel:true});
@@ -51,16 +54,21 @@ try{
   await expect.poll(async()=>{const saved=await page.evaluate(()=>window.countryClub.loadRound());return saved?.state?.shotId===1&&saved.state.velocity.x===0&&saved.state.velocity.y===0;},{timeout:15000}).toBe(true);
   await page.evaluate(()=>window.countryClub.hide());const round=await page.evaluate(()=>window.countryClub.loadRound());await app.close();app=undefined;
   const oldRegistration=registration(),oldExecutable=await digest(executable),oldSave=await digest(path.join(data,'country-club.sqlite'));
-  await run(installer,['/REPAIR',`/D=${target}`],{cancel:true});
+  reference={registration:oldRegistration,executableSha256:oldExecutable,saveSha256:oldSave,providerSha256:fixtureHashes};
+  await writeFile(path.join(profile,'reference.json'),JSON.stringify(reference,null,2));
+  await run(installer,['/REPAIR',`/D=${target}`],{cancel:true,expectedCode:repairComplete?0:1});
   assert.deepEqual(registration(),oldRegistration);assert.equal(await digest(executable),oldExecutable);assert.equal(await digest(path.join(data,'country-club.sqlite')),oldSave);assert(!(await exists(target+'.ccc-transaction')));await verifyPrivate();
-  checks.push('native existing-install Cancel preserves executable, registration, exact SQLite bytes and fixture provider files');
+  checks.push(repairComplete?'native same-version repair completes and preserves executable, registration, exact SQLite bytes and fixture provider files':'native existing-install Cancel preserves executable, registration, exact SQLite bytes and fixture provider files');
   app=await electron.launch({executablePath:executable,env,timeout:30000});const restored=await app.firstWindow();
   assert.deepEqual((await restored.evaluate(()=>window.countryClub.loadRound())).state,round.state);await app.close();app=undefined;
-  checks.push('existing installation remains playable with exact acknowledged drag shot after cancellation');
+  checks.push(`existing installation remains playable with exact acknowledged drag shot after ${repairComplete?'native repair':'cancellation'}`);
   await run(path.join(target,'Uninstall Claude Country Club.exe'),['/S']);installed=false;await expect.poll(()=>exists(executable),{timeout:30000}).toBe(false);assert.equal(registration(),null);await verifyPrivate();
   checks.push('fixture installs and uninstalls at a path with spaces, ampersand and accented/Greek characters');
-  await writeFile(path.join(work,'result.json'),JSON.stringify({passed:true,installer,sha256:await digest(installer),checks,limitations:['Cancellation is exercised before file extraction begins; cancellation during extraction and physical disk-full/power-loss remain unverified.','Uses the current Windows account with an isolated application data/provider home fixture; this is not a clean-profile certification.']},null,2));
-  console.log('Native installer cancellation acceptance passed.');
-}catch(error){await writeFile(path.join(work,'result.json'),JSON.stringify({passed:false,error:String(error),checks,fixtureInstalled:installed,target},null,2));throw error;}
+  await writeFile(path.join(work,repairComplete?'repair-result.json':'result.json'),JSON.stringify({passed:true,mode:repairComplete?'native-repair':'native-cancel',installer,sha256:await digest(installer),profile,outcomes,reference,checks,limitations:['Cancellation is exercised before file extraction begins; cancellation during extraction and physical disk-full/power-loss remain unverified.','Uses the current Windows account with an isolated application data/provider home fixture; this is not a clean-profile certification.']},null,2));
+  console.log(`Native installer ${repairComplete?'repair':'cancellation'} acceptance passed.`);
+}catch(error){
+  const postFailure=reference?{registration:registration(),executableSha256:await digest(executable).catch(()=>null),saveSha256:await digest(path.join(data,'country-club.sqlite')).catch(()=>null),providerSha256:await Promise.all(fixtures.map(file=>digest(file).catch(()=>null)))}:null;
+  await writeFile(path.join(work,repairComplete?'repair-result.json':'result.json'),JSON.stringify({passed:false,mode:repairComplete?'native-repair':'native-cancel',error:String(error),checks,fixtureInstalled:installed,target,profile,outcomes,reference,postFailure},null,2));throw error;
+}
 finally{await app?.close().catch(()=>{});}
 

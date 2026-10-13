@@ -1,0 +1,11 @@
+import { spawn } from 'node:child_process';
+import { mkdtemp } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import assert from 'node:assert/strict';
+const electron=path.resolve('node_modules/electron/dist/electron.exe');
+const data=await mkdtemp(path.join(os.tmpdir(),'ccc-window-worker-smoke-'));
+const child=spawn(electron,['.','--ccc-background'],{cwd:process.cwd(),windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...process.env,CCC_TEST_MODE:'1',CCC_DATA_DIR:data,CCC_WINDOW_WORKER:'1',CCC_WINDOW_WORKER_SMOKE:'1'}});
+let output='';child.stdout.on('data',bytes=>{output+=bytes;});child.stderr.on('data',bytes=>{output+=bytes;});
+const exit=await Promise.race([new Promise(resolve=>child.once('exit',resolve)),new Promise(resolve=>setTimeout(resolve,15000,'timeout'))]);
+if(exit==='timeout'){child.kill();throw Error(`Timed out: ${output}`);}assert.equal(child.exitCode,0,output);assert.match(output,/CCC_WINDOW_WORKER_SMOKE_OK/);console.log('Opt-in normal worker-renderer smoke test passed.');

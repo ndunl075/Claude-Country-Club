@@ -15,14 +15,45 @@
   !cd "${PROJECT_DIR}\installers\windows"
   !ifndef BUILD_UNINSTALLER
     Var cccTarget
+    Var cccStage
+    Var cccResult
+    Var cccDetails
+    Var cccRecoveryResult
+    Var cccRecoveryDetails
     Function .onGUIEnd
       ${If} $cccTarget != ""
         ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
         ${If} $R0 != 0
           SetOutPath "$PLUGINSDIR"
-          ExecWait '"$PLUGINSDIR\ccc-installer.exe" recover "$cccTarget"' $R0
+          nsExec::ExecToStack '"$PLUGINSDIR\ccc-installer.exe" recover "$cccTarget"'
+          Pop $cccRecoveryResult
+          Pop $cccRecoveryDetails
+          ${If} $cccRecoveryResult != "0"
+            DetailPrint "Closing recovery result: $cccRecoveryResult"
+            DetailPrint "Closing recovery details (bounded): $cccRecoveryDetails"
+          ${EndIf}
         ${EndIf}
       ${EndIf}
+    FunctionEnd
+  !endif
+!macroend
+
+!macro customPageAfterChangeDir
+  !ifdef allowToChangeInstallationDirectory
+    !undef MUI_PAGE_CUSTOMFUNCTION_PRE
+    !define MUI_PAGE_CUSTOMFUNCTION_PRE cccInstFilesPre
+    Function cccInstFilesPre
+      Push $R0
+      ReadRegStr $R0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+      ClearErrors
+      ; Repair keeps the registered destination instead of appending a subfolder.
+      ${If} $R0 != ""
+      ${AndIf} $INSTDIR == $R0
+        Pop $R0
+        Return
+      ${EndIf}
+      Pop $R0
+      Call instFilesPre
     FunctionEnd
   !endif
 !macroend
@@ -82,10 +113,15 @@
       SetErrorLevel 2
       Quit
     ${EndIf}
-    ExecWait '"$PLUGINSDIR\ccc-installer.exe" recover "$cccTarget"' $R0
-    ${If} $R0 != 0
+    StrCpy $cccStage "startup recovery"
+    nsExec::ExecToStack '"$PLUGINSDIR\ccc-installer.exe" recover "$cccTarget"'
+    Pop $cccResult
+    Pop $cccDetails
+    ${If} $cccResult != "0"
+      DetailPrint "Installation failed during $cccStage; result: $cccResult"
+      DetailPrint "Coordinator details (bounded): $cccDetails"
       IfSilent recovery_abort
-      MessageBox MB_OK|MB_ICONEXCLAMATION "Automatic recovery could not finish. Keep $cccTarget and $cccTarget.ccc-transaction unchanged for manual review. Saved rounds and provider settings were not changed."
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Automatic recovery could not finish. Saved rounds and provider settings were not changed.$\r$\n$\r$\nStage: $cccStage$\r$\nResult: $cccResult$\r$\n$\r$\nKeep $cccTarget and $cccTarget.ccc-transaction unchanged for manual review.$\r$\n$\r$\nCoordinator details (may be truncated or unreadable):$\r$\n$cccDetails"
       recovery_abort:
       SetErrorLevel 5
       Quit
