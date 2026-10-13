@@ -10,6 +10,17 @@ import (
 	"testing"
 )
 
+// realTempDir resolves symlinked temp roots (macOS /var -> /private/var) so the
+// production linked-path refusal stays strict and tests exercise it unchanged.
+func realTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 type fakeRegistration struct{ restored bool }
 
 func (r *fakeRegistration) Capture(string) (json.RawMessage, error) {
@@ -38,7 +49,7 @@ func bundle(t *testing.T, dir, version string) {
 }
 func fixture(t *testing.T, prior bool) (*Transaction, *fakeRegistration) {
 	t.Helper()
-	target := filepath.Join(t.TempDir(), "app")
+	target := filepath.Join(realTempDir(t), "app")
 	if prior {
 		bundle(t, target, "old")
 	}
@@ -174,14 +185,17 @@ func TestEditedReplacementPreservesBothCopies(t *testing.T) {
 }
 func TestUnownedPathsAreRefused(t *testing.T) {
 	r := &fakeRegistration{}
-	target := filepath.Join(t.TempDir(), "documents")
+	target := filepath.Join(realTempDir(t), "documents")
 	if err := os.Mkdir(target, 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(target, "personal.txt"), []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	tx, _ := New(target, r)
+	tx, err := New(target, r)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if tx.Prepare() == nil {
 		t.Fatal("unowned target accepted")
 	}
