@@ -116,7 +116,7 @@ it('every generated hole retains a dry, ball-width route to the cup', () => {
     for (let i = 0; i < queue.length; i++) { const [x, y] = queue[i]!; if (x === target[0] && y === target[1]) { reached = true; break; } for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const xx = x! + dx!, yy = y! + dy!, key = `${xx},${yy}`; if (xx >= 0 && xx < nx && yy >= 0 && yy < ny && !seen.has(key) && free((xx + 1) * step, (yy + 1) * step)) { seen.add(key); queue.push([xx, yy]); } } }
     expect(reached, `${seed}:${h.id}`).toBe(true);
   }
-});
+}, 30_000); // 324 flood fills take over 5s on slower hosted Intel Mac runners.
 it('does not charge a stroke for finite components with an overflowing magnitude',()=>{
   const round=createRound(55);
   expect(shoot(round,{x:Number.MAX_VALUE,y:Number.MAX_VALUE})).toEqual(round);
