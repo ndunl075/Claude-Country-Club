@@ -19,7 +19,7 @@ const executable = path.join(destination, 'Claude Country Club.exe');
 const exists = async p => access(p).then(() => true, () => false);
 // Never overwrite another installed copy or touch its registered integrations.
 function readRegistration() {
-  const json = execFileSync('powershell.exe', ['-NoProfile', '-Command', "Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Claude Country Club(?: [0-9].*)?$' } | Select-Object PSChildName,UninstallString,DisplayVersion | ConvertTo-Json -Compress"], { encoding: 'utf8', windowsHide: true }).trim();
+  const json = execFileSync('powershell.exe', ['-NoProfile', '-Command', "Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Claude Country Club(?: [0-9].*)?$' } | Select-Object PSChildName,UninstallString,DisplayVersion | ConvertTo-Json -Compress; exit 0"], { encoding: 'utf8', windowsHide: true }).trim();
   if (!json) return null;
   const record = JSON.parse(json);
   assert(!Array.isArray(record), 'Ambiguous installation registration; use a disposable account.');
