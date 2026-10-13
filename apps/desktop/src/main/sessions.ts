@@ -68,4 +68,11 @@ export class SessionRegistry {
   disconnect() { for (const s of this.sessions.values()) { s.state = 'unknown'; s.reliable = false; } }
   list() { return [...this.sessions.values()].map(s => ({ ...s })); }
   get(key: string | null) { return key ? this.sessions.get(key) : undefined; }
+  /** Follow the only working session when nothing usable is selected: no choice yet, a session that ended, or one this run never saw (e.g. a choice kept from before a restart). */
+  autoSelect(selected: string | null): string | null {
+    const current = this.get(selected);
+    if (selected && current && current.state !== 'closed') return selected;
+    const active = this.list().filter(s => s.state === 'working');
+    return active.length === 1 ? active[0]!.key : selected;
+  }
 }
