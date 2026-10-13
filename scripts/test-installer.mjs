@@ -37,6 +37,7 @@ async function run(command, args, env = process.env, verbatim = false, expectedC
     // These established Playwright fixtures attach to the controller's
     // BrowserWindow. The shipped worker path has dedicated packaged coverage;
     // retain this compatibility matrix until each fixture drives the worker.
+    console.log('[installer-test] run', path.basename(command), args.join(' '));
     const childEnv=command===process.execPath?{...env,CCC_WINDOW_WORKER:'0'}:env;
     const child = spawn(command, args, { cwd: root, env:childEnv, windowsHide: true, windowsVerbatimArguments: verbatim, stdio: 'inherit' });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Installer test exceeded 180 seconds.')); }, 180_000);
