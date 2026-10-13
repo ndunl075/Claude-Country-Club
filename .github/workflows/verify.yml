@@ -44,11 +44,15 @@ jobs:
       - name: Correlate attention hook delivery and state
         if: matrix.target == 'win'
         shell: pwsh
+        env:
+          CCC_WINDOW_WORKER: '0'
         run: |
           $env:CCC_EXECUTABLE = Join-Path (Get-Location) 'release/win-unpacked/Claude Country Club.exe'
           npm run test:attention-delivery
       - name: Complete nine holes through packaged controls
         shell: pwsh
+        env:
+          CCC_WINDOW_WORKER: '0'
         run: |
           $env:CCC_EXECUTABLE = Join-Path (Get-Location) 'release/win-unpacked/Claude Country Club.exe'
           npm run test:full-round

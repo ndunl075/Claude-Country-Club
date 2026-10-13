@@ -19,7 +19,7 @@ const executable = path.join(destination, 'Claude Country Club.exe');
 const exists = async p => access(p).then(() => true, () => false);
 // Never overwrite another installed copy or touch its registered integrations.
 function readRegistration() {
-  const json = execFileSync('powershell.exe', ['-NoProfile', '-Command', "Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Claude Country Club(?: [0-9].*)?$' } | Select-Object PSChildName,UninstallString,DisplayVersion | ConvertTo-Json -Compress"], { encoding: 'utf8', windowsHide: true }).trim();
+  const json = execFileSync('powershell.exe', ['-NoProfile', '-Command', "Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Claude Country Club(?: [0-9].*)?$' } | Select-Object PSChildName,UninstallString,DisplayVersion | ConvertTo-Json -Compress; exit 0"], { encoding: 'utf8', windowsHide: true }).trim();
   if (!json) return null;
   const record = JSON.parse(json);
   assert(!Array.isArray(record), 'Ambiguous installation registration; use a disposable account.');
@@ -37,6 +37,7 @@ async function run(command, args, env = process.env, verbatim = false, expectedC
     // These established Playwright fixtures attach to the controller's
     // BrowserWindow. The shipped worker path has dedicated packaged coverage;
     // retain this compatibility matrix until each fixture drives the worker.
+    console.log('[installer-test] run', path.basename(command), args.join(' '));
     const childEnv=command===process.execPath?{...env,CCC_WINDOW_WORKER:'0'}:env;
     const child = spawn(command, args, { cwd: root, env:childEnv, windowsHide: true, windowsVerbatimArguments: verbatim, stdio: 'inherit' });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Installer test exceeded 180 seconds.')); }, 180_000);

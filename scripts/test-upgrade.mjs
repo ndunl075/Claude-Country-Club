@@ -15,7 +15,7 @@ const base = path.join(root, 'release/Claude-Country-Club-Setup-0.1.0-x64.exe');
 const upgrade = path.join(root, 'work/upgrade-release/Claude-Country-Club-Setup-0.1.1-x64.exe');
 const exists = p => access(p).then(() => true, () => false);
 const registration = () => {
-  const json = execFileSync('powershell.exe', ['-NoProfile', '-Command', "if (Test-Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\e0e2b6b5-dc94-506c-b07b-3fd5ab2393ac') { Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\e0e2b6b5-dc94-506c-b07b-3fd5ab2393ac' | Select-Object UninstallString,DisplayVersion | ConvertTo-Json -Compress }"], { encoding: 'utf8', windowsHide: true }).trim();
+  const json = execFileSync('powershell.exe', ['-NoProfile', '-Command', "if (Test-Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\e0e2b6b5-dc94-506c-b07b-3fd5ab2393ac') { Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\e0e2b6b5-dc94-506c-b07b-3fd5ab2393ac' | Select-Object UninstallString,DisplayVersion | ConvertTo-Json -Compress }; exit 0"], { encoding: 'utf8', windowsHide: true }).trim();
   if (!json) return null;
   const value = JSON.parse(json), file = /^"([^"]+)"/.exec(value.UninstallString ?? '')?.[1];
   assert(file && path.dirname(file).toLowerCase() === target.toLowerCase(), 'An installation outside this test is registered; refusing to continue.');
@@ -64,7 +64,7 @@ try {
   await mkdir(path.join(home, '.codex'), { recursive: true });
   const auth = path.join(home, '.codex/auth.json'), hooks = path.join(home, '.codex/hooks.json');
   await writeFile(auth, '{"fixture":"preserve-authentication"}');
-  const env = { ...process.env, CCC_TEST_MODE: '1', CCC_DATA_DIR: data, CCC_TEST_HOME: home }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, CCC_TEST_MODE: '1', CCC_DATA_DIR: data, CCC_TEST_HOME: home, CCC_WINDOW_WORKER: '0' }; delete env.ELECTRON_RUN_AS_NODE;
   async function launch() { app = await electron.launch({ executablePath: executable, args: [], env }); const page = await app.firstWindow(); await expect(page.getByRole('region', { name: 'Mini golf game', exact: true })).toBeVisible(); return page; }
   let page = await launch();
   await page.evaluate(() => window.countryClub.practice());

@@ -18,7 +18,7 @@ const data=path.join(profile,'data'),home=path.join(profile,'home');
 const exists=p=>access(p).then(()=>true,()=>false);
 const digest=async p=>createHash('sha256').update(await readFile(p)).digest('hex');
 function registration(){
-  const raw=execFileSync('powershell.exe',['-NoProfile','-Command',"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Claude Country Club(?: [0-9].*)?$' } | Select-Object PSChildName,UninstallString,DisplayVersion | ConvertTo-Json -Compress"],{encoding:'utf8',windowsHide:true}).trim();
+  const raw=execFileSync('powershell.exe',['-NoProfile','-Command',"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match '^Claude Country Club(?: [0-9].*)?$' } | Select-Object PSChildName,UninstallString,DisplayVersion | ConvertTo-Json -Compress; exit 0"],{encoding:'utf8',windowsHide:true}).trim();
   if(!raw)return null;
   const record=JSON.parse(raw);assert(!Array.isArray(record),'Ambiguous existing installation preserved');
   const uninstall=/^"([^"]+)"/.exec(record.UninstallString??'')?.[1];

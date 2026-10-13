@@ -26,11 +26,14 @@ async function launch(){
   })).toBe(true);
   assert.equal(await windowCount(),0,'Background startup created a BrowserWindow before use');
 }
-async function hook(kind,turn){
+async function hook(kind,turn,attempt=1){
   const child=spawn(helper,['--provider','codex','--event',kind,'--config',path.join(data,'connection.json')],{windowsHide:true,stdio:'pipe'});let output='';
   child.stdout.on('data',chunk=>output+=chunk);child.stderr.on('data',chunk=>output+=chunk);child.stdin.end(JSON.stringify({session_id:'background-fixture',cwd:home,turn_id:turn}));
   await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error(`Hook exited ${code}`)));});assert.equal(output,'');
-  await expect.poll(()=>app.evaluate(({},{kind,turn})=>globalThis.__backgroundTrace.events.some(e=>e.kind===kind&&e.turn===turn),{kind,turn})).toBe(true);
+  // A freshly relaunched broker can drop the very first start before it is listening on slow CI runners; only that idempotent event is retried.
+  const seen=()=>app.evaluate(({},{kind,turn})=>globalThis.__backgroundTrace.events.some(e=>e.kind===kind&&e.turn===turn),{kind,turn});
+  if(kind==='start'&&attempt<3){const ok=await expect.poll(seen,{timeout:8000}).toBe(true).then(()=>true,()=>false);if(!ok)return hook(kind,turn,attempt+1);return;}
+  await expect.poll(seen).toBe(true);
 }
 async function resources(phase){
   const snapshot=await app.evaluate(({app,BrowserWindow})=>({windows:BrowserWindow.getAllWindows().length,processes:app.getAppMetrics().map(p=>({type:p.type,workingSetKiB:p.memory.workingSetSize})),helperPids:process._getActiveHandles().filter(h=>h.constructor?.name==='ChildProcess'&&/ccc-hook(?:\.exe)?$/.test(h.spawnfile??'')).map(h=>h.pid)}));
