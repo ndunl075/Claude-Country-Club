@@ -64,7 +64,7 @@ try {
   await mkdir(path.join(home, '.codex'), { recursive: true });
   const auth = path.join(home, '.codex/auth.json'), hooks = path.join(home, '.codex/hooks.json');
   await writeFile(auth, '{"fixture":"preserve-authentication"}');
-  const env = { ...process.env, CCC_TEST_MODE: '1', CCC_DATA_DIR: data, CCC_TEST_HOME: home }; delete env.ELECTRON_RUN_AS_NODE;
+  const env = { ...process.env, CCC_TEST_MODE: '1', CCC_DATA_DIR: data, CCC_TEST_HOME: home, CCC_WINDOW_WORKER: '0' }; delete env.ELECTRON_RUN_AS_NODE;
   async function launch() { app = await electron.launch({ executablePath: executable, args: [], env }); const page = await app.firstWindow(); await expect(page.getByRole('region', { name: 'Mini golf game', exact: true })).toBeVisible(); return page; }
   let page = await launch();
   await page.evaluate(() => window.countryClub.practice());
