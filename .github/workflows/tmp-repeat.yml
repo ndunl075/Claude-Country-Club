@@ -3,7 +3,7 @@ name: Temporary Windows repeat
 on:
   workflow_dispatch:
   push:
-    branches: ['claude/win-ci-green*', 'win-ci-green*']
+    branches: ['claude/jolly-liskov-0e79c9']
 permissions:
   contents: read
 jobs:
