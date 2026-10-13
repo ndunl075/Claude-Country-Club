@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
@@ -40,6 +41,10 @@ func main() {
 	}
 	tx, err := installtxn.New(os.Args[2], installtxn.WindowsRegistration{})
 	if err == nil {
+		// Acceptance fixtures that deliberately hold files open shorten the wait.
+		if ms, convErr := strconv.Atoi(os.Getenv("CCC_INSTALLER_RETRY_MS")); convErr == nil && ms >= 0 {
+			tx.RetryFor = time.Duration(ms) * time.Millisecond
+		}
 		switch os.Args[1] {
 		case "prepare":
 			err = tx.Prepare()

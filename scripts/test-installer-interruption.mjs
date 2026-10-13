@@ -28,6 +28,8 @@ function staleFixtureRegistration(){
   const scoped=path.resolve(work).toLowerCase()+path.sep;
   assert(file&&path.resolve(path.dirname(file)).toLowerCase().startsWith(scoped),'Installation outside fixture preserved');return file;
 }
+// A previous suite's silent uninstaller returns before its detached cleanup finishes removing the registration.
+{const deadline=Date.now()+30_000;for(;;){try{staleFixtureRegistration();break;}catch(error){if(!String(error.message).includes('outside fixture')||Date.now()>deadline)throw error;await new Promise(resolve=>setTimeout(resolve,250));}}}
 const staleUninstaller=staleFixtureRegistration();
 if(staleUninstaller)await new Promise((resolve,reject)=>{const child=spawn(staleUninstaller,['/S'],{windowsHide:true});child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error(`Scoped fixture uninstaller exited ${code}`)));});
 if(staleUninstaller){const deadline=Date.now()+30_000;while(staleFixtureRegistration()){if(Date.now()>deadline)throw new Error('Scoped fixture uninstaller did not remove its registration.');await new Promise(resolve=>setTimeout(resolve,200));}}
@@ -93,13 +95,13 @@ try{
   await writeFile(lockScript,'param([string]$LockPath)\n$fixtureLock = [IO.File]::Open($LockPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)\ntry { [Console]::WriteLine("LOCK_READY"); [Console]::Out.Flush(); [Console]::ReadLine() | Out-Null } finally { $fixtureLock.Dispose() }\n');
   lockProcess=spawn('powershell.exe',['-NoProfile','-File',lockScript,'-LockPath',executable],{windowsHide:true,stdio:['pipe','pipe','pipe']});
   await new Promise((resolve,reject)=>{let output='';const timer=setTimeout(()=>reject(new Error('Fixture lock did not become ready')),10000);lockProcess.stdout.on('data',chunk=>{output+=chunk.toString();if(output.includes('LOCK_READY')){clearTimeout(timer);resolve();}});lockProcess.once('error',error=>{clearTimeout(timer);reject(error);});lockProcess.once('exit',code=>{clearTimeout(timer);reject(new Error(`Fixture lock exited early: ${code}`));});});
-  await run(coordinator,['commit',target],5);await intact();assert(await exists(transaction));
+  await run(coordinator,['commit',target],5,false,{...process.env,CCC_INSTALLER_RETRY_MS:'1000'});await intact();assert(await exists(transaction));
   await run(coordinator,['recover',target]);await intact();assert(!(await exists(transaction)));
   lockProcess.stdin.end('\n');await new Promise(resolve=>lockProcess.once('exit',resolve));lockProcess=undefined;
   checks.push('real Windows deny-delete file handle refuses promotion and recovery preserves the entire prior installation while the lock is held');
   app=await electron.launch({executablePath:executable,env,timeout:30000});page=await app.firstWindow();assert.deepEqual((await page.evaluate(()=>window.countryClub.loadRound())).state,saved.state);await app.close();app=undefined;
   checks.push('old installed application reopens with exact acknowledged drag shot after interrupted and refused replacement');
-  await run(path.join(target,'Uninstall Claude Country Club.exe'),['/S']);await expect.poll(()=>exists(executable),{timeout:30000}).toBe(false);assert.equal(registration(),null);await privateUnchanged();assert(await exists(path.join(data,'country-club.sqlite')));
+  await run(path.join(target,'Uninstall Claude Country Club.exe'),['/S']);await expect.poll(()=>exists(executable),{timeout:30000}).toBe(false);await expect.poll(()=>registration(),{timeout:30000}).toBe(null);await privateUnchanged();assert(await exists(path.join(data,'country-club.sqlite')));
   checks.push('Unicode, spaces and ampersand fixture path supports packaged launch, recovery and clean uninstall with progress retained');
   await writeFile(path.join(work,'result.json'),JSON.stringify({passed:true,installer,sha256:await digest(installer),checks,limitations:['Running-uninstall refusal is measured through a byte-identical copied uninstaller and the documented _?= target option, so the final exit is synchronous; the ordinary launcher exit is not the operation result.','Production singleton handoff uses pre-entry private path overrides and owned inspectors; native installer dialog and normal uninstrumented launch remain separate checks.','Partial extraction is constructed through the bundled coordinator; no native wizard Cancel is clicked during extraction.','File-lock refusal is a real Windows filesystem fault; physical disk-full, power loss and a clean OS profile remain unverified.']},null,2));
   console.log('Native installer interruption acceptance passed.');
