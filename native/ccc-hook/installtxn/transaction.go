@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const AppID = "com.countryclub.desktop"
@@ -41,6 +42,40 @@ type Transaction struct {
 	Target, Directory, Stage, Backup string
 	Registry                         Registration
 	Rename                           func(string, string) error
+	// RetryFor bounds how long a rename or tree removal is retried when
+	// Windows reports a transient sharing/access error, for example while a
+	// just-closed application or a virus scanner still holds a handle.
+	RetryFor time.Duration
+}
+
+// DefaultRetryFor is the bounded wait applied to filesystem operations that can
+// lose a race with a process that is still releasing the installed files.
+const DefaultRetryFor = 20 * time.Second
+
+// Logf records installer diagnostics. The coordinator binary replaces it with a
+// bounded file logger; library users and tests get a no-op.
+var Logf = func(format string, args ...any) {}
+
+func (t *Transaction) retry(what string, fn func() error) error {
+	deadline := time.Now().Add(t.RetryFor)
+	for attempt := 1; ; attempt++ {
+		err := fn()
+		if err == nil {
+			if attempt > 1 {
+				Logf("%s succeeded on attempt %d", what, attempt)
+			}
+			return nil
+		}
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrExist) || !time.Now().Before(deadline) {
+			Logf("%s failed on attempt %d: %v", what, attempt, err)
+			return err
+		}
+		Logf("%s attempt %d failed, retrying: %v", what, attempt, err)
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+func (t *Transaction) rename(from, to string) error {
+	return t.retry("rename "+from+" -> "+to, func() error { return t.Rename(from, to) })
 }
 
 func New(target string, registration Registration) (*Transaction, error) {
@@ -55,7 +90,7 @@ func New(target string, registration Registration) (*Transaction, error) {
 		return nil, err
 	}
 	dir := target + ".ccc-transaction"
-	return &Transaction{target, dir, filepath.Join(dir, "new"), filepath.Join(dir, "previous"), registration, os.Rename}, nil
+	return &Transaction{target, dir, filepath.Join(dir, "new"), filepath.Join(dir, "previous"), registration, os.Rename, DefaultRetryFor}, nil
 }
 func safePath(p string) error {
 	for {
@@ -256,7 +291,7 @@ func (t *Transaction) Commit() error {
 		return err
 	}
 	if j.Previous {
-		if err = t.Rename(t.Target, t.Backup); err != nil {
+		if err = t.rename(t.Target, t.Backup); err != nil {
 			return err
 		}
 	} else if exists(t.Target) {
@@ -264,9 +299,9 @@ func (t *Transaction) Commit() error {
 			return err
 		}
 	}
-	if err = t.Rename(t.Stage, t.Target); err != nil {
+	if err = t.rename(t.Stage, t.Target); err != nil {
 		if j.Previous {
-			if rollbackErr := t.Rename(t.Backup, t.Target); rollbackErr != nil {
+			if rollbackErr := t.rename(t.Backup, t.Target); rollbackErr != nil {
 				return fmt.Errorf("switch failed: %v; previous app retained at %s: %v", err, t.Backup, rollbackErr)
 			}
 		}
@@ -324,7 +359,7 @@ func (t *Transaction) removeOwnedTree() error {
 	// Keep the ownership journal until both large trees are gone. A locked
 	// backup must remain recoverable on the next installer invocation.
 	for _, tree := range []string{t.Stage, t.Backup} {
-		if err = os.RemoveAll(tree); err != nil {
+		if err = t.retry("remove "+tree, func() error { return os.RemoveAll(tree) }); err != nil {
 			return err
 		}
 	}
@@ -362,11 +397,11 @@ func (t *Transaction) Recover() error {
 				if exists(t.Stage) {
 					return errors.New("ambiguous recovery tree")
 				}
-				if err = t.Rename(t.Target, t.Stage); err != nil {
+				if err = t.rename(t.Target, t.Stage); err != nil {
 					return err
 				}
 			}
-			if err = t.Rename(t.Backup, t.Target); err != nil {
+			if err = t.rename(t.Backup, t.Target); err != nil {
 				return err
 			}
 		} else if !j.Previous && exists(t.Target) {
@@ -376,7 +411,7 @@ func (t *Transaction) Recover() error {
 			if exists(t.Stage) {
 				return errors.New("ambiguous fresh install recovery")
 			}
-			if err = t.Rename(t.Target, t.Stage); err != nil {
+			if err = t.rename(t.Target, t.Stage); err != nil {
 				return err
 			}
 		} else if j.Previous && !exists(t.Target) {

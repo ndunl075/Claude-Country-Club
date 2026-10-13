@@ -48,7 +48,7 @@ async function launch(label,extra=[]){
     if(process.env.CCC_TEST_MODE!==undefined||os.homedir()!==paths.home)throw Error('Production fixture isolation failed');
     for(const [name,directory] of Object.entries(paths))app.setPath(name,directory);
     const record={pid:process.pid,testMode:false,paths:Object.fromEntries(Object.keys(paths).map(name=>[name,app.getPath(name)])),events:[]};
-    const save=()=>fs.writeFileSync(tracePath,JSON.stringify(record));save();
+    const save=()=>{fs.writeFileSync(tracePath+'.tmp',JSON.stringify(record));fs.renameSync(tracePath+'.tmp',tracePath);};save();
     app.on('second-instance',(_event,args)=>{record.events.push({kind:'second-instance',installerQuit:args.includes('--ccc-installer-quit')});save();});
     app.on('before-quit',()=>{record.events.push({kind:'before-quit'});save();});
     app.on('will-quit',()=>{record.events.push({kind:'will-quit'});save();});

@@ -72,6 +72,13 @@ transaction_failed:
   Pop $cccRecoveryDetails
   DetailPrint "Recovery result: $cccRecoveryResult"
   DetailPrint "Recovery details (bounded): $cccRecoveryDetails"
+  ; Silent installs show no details; leave them where acceptance tests can read them.
+  ClearErrors
+  FileOpen $R9 "$TEMP\ccc-installer-failure.txt" w
+  ${IfNot} ${Errors}
+    FileWrite $R9 "stage=$cccStage$\r$\nresult=$cccResult$\r$\ndetails=$cccDetails$\r$\nrecovery=$cccRecoveryResult$\r$\nrecovery-details=$cccRecoveryDetails$\r$\n"
+    FileClose $R9
+  ${EndIf}
   IfSilent transaction_abort
   MessageBox MB_OK|MB_ICONEXCLAMATION "Country Club could not complete installation. Your saved rounds and provider settings were preserved.$\r$\n$\r$\nStage: $cccStage$\r$\nResult: $cccResult$\r$\nRecovery result: $cccRecoveryResult$\r$\n$\r$\nIf recovery files remain at $cccTarget.ccc-transaction, keep them for repair and retry this installer.$\r$\n$\r$\nCoordinator details (may be truncated or unreadable):$\r$\n$cccDetails$\r$\n$\r$\nRecovery details (may be truncated or unreadable):$\r$\n$cccRecoveryDetails"
   transaction_abort:

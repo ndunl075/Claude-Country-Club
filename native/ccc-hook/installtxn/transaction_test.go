@@ -93,6 +93,7 @@ func TestCommitRetainsPreviousUntilFinalize(t *testing.T) {
 }
 func TestFailedRenameRestoresPrevious(t *testing.T) {
 	tx, r := fixture(t, true)
+	tx.RetryFor = 0
 	tx.Rename = func(a, b string) error {
 		if a == tx.Stage {
 			return errors.New("injected extraction promotion failure")
