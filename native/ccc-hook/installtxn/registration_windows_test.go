@@ -7,7 +7,7 @@ import (
 )
 
 func TestRegistrationSnapshotRestoresOnlyScopedFixtureKeys(t *testing.T) {
-	target := filepath.Join(t.TempDir(), "app")
+	target := filepath.Join(realTempDir(t), "app")
 	original := productKeys
 	fixtureRoot := `Software\CountryClubInstallerTests\` + filepath.Base(filepath.Dir(target))
 	productKeys = []string{fixtureRoot + `\App`, fixtureRoot + `\Uninstall`}
